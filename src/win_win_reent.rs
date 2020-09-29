@@ -2,6 +2,9 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use winapi::shared::minwindef::{LPARAM, LRESULT, UINT, WPARAM};
 use winapi::shared::windef::HWND;
+use winapi::um::winuser::WM_CREATE;
+use once_cell::unsync::OnceCell;
+use std::cell::Cell;
 
 /// A reminder that window proc is reentrant.
 ///
@@ -39,17 +42,31 @@ pub trait WindowProcState: Sized {
     )-> Option<LRESULT>;
 }
 
-pub struct OuterState<S>(RefCell<S>);
+pub struct LazyState<S, F> {
+    state: OnceCell<RefCell<S>>,
+    init: std::cell::Cell<Option<F>>,
+}
 
-impl<S> OuterState<S> {
-    pub fn new(state: S) -> Self {
-        Self(RefCell::new(state))
+impl<S, F: FnOnce(HWND) -> S> LazyState<S, F> {
+    pub fn new(init: F) -> Self {
+        LazyState {
+            state: OnceCell::new(),
+            init: Cell::new(Some(init)),
+        }
     }
 }
 
-impl<S: WindowProcState> win_win::WindowProc for OuterState<S> {
+impl<S, F> win_win::WindowProc for LazyState<S, F>
+where
+    S: WindowProcState,
+    F: FnOnce(HWND) -> S,
+{
     fn window_proc(&self, hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM,
     ) -> Option<LRESULT> {
-        S::window_proc(StateRef(&self.0), hwnd, msg, wparam, lparam)
+        let state = self.state.get_or_init(|| {
+            assert_eq!(msg, WM_CREATE);
+            RefCell::new(self.init.take().unwrap()(hwnd))
+        });
+        S::window_proc(StateRef(state), hwnd, msg, wparam, lparam)
     }
 }

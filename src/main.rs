@@ -25,7 +25,7 @@ impl WindowProcState for App {
 }
 
 fn main() {
-    let app = OuterState::new(App);
+    let app = LazyState::new(|_hwnd| App);
     unsafe {
         let win_class = win_win::WindowClass::builder("e2 class").build().unwrap();
         let hwnd = win_win::WindowBuilder::new(app, &win_class)
