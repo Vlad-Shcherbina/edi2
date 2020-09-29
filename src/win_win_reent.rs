@@ -30,7 +30,7 @@ impl<'s, S> StateRef<'s, S> {
         self.0.borrow_mut()
     }
 
-    pub fn reent<'a>(&'a mut self) -> Reent<'a> {
+    pub fn reent(&mut self) -> Reent {
         Reent(std::marker::PhantomData)
     }
 }

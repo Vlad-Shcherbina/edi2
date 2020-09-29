@@ -74,7 +74,7 @@ pub fn message_box(
 
 pub fn load_cursor(cursor_name: LPCWSTR) -> HCURSOR {
     let res = unsafe { LoadCursorW(0 as HINSTANCE, cursor_name) };
-    assert!(res != null_mut(), "{}", std::io::Error::last_os_error());
+    assert!(!res.is_null(), "{}", std::io::Error::last_os_error());
     res
 }
 
