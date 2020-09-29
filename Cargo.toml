@@ -1,0 +1,29 @@
+[package]
+name = "edi2"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+win-win = "*"
+wio = "*"
+win-msg-name = "*"
+
+[dependencies.winapi]
+version = "*"
+features = [
+    "debug",
+    "winbase",
+    "winuser",
+    "libloaderapi",
+    "d2d1",
+    "windowsx",
+    "shellapi",
+    "windef",
+    "winerror",
+    "dxgiformat",
+    "dcommon",
+    "dwrite",
+]
+
+[features]
+clippy = []  # https://github.com/rust-lang/cargo/issues/8075#issuecomment-610259732
