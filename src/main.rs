@@ -12,7 +12,7 @@ use winapi::um::winuser::*;
 use winapi::um::d2d1::*;
 use winapi::um::dwrite::*;
 use winapi::um::dcommon::*;
-use winapi::um::dcommon::D2D1_POINT_2F;
+use winapi::um::dcommon::{D2D1_POINT_2F, D2D1_RECT_F};
 use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::text_layout::TextLayout;
@@ -21,7 +21,7 @@ enum VisTree {
     Leaf {
         layout: TextLayout,
     },
-    Branch {
+    Node {
         children: Vec<VisTree>,
     },
 }
@@ -80,13 +80,19 @@ impl App {
                     &ctx.code_text_format,
                     "    print('hello')", 500.0),
             },
-            VisTree::Branch {
+            VisTree::Leaf {
+                layout: TextLayout::new(
+                    &ctx.dwrite_factory,
+                    &ctx.normal_text_format,
+                    "Stuff...", 500.0),
+            },
+            VisTree::Node {
                 children: vec![
                     VisTree::Leaf {
                         layout: TextLayout::new(
                             &ctx.dwrite_factory,
                             &ctx.normal_text_format,
-                            "node", 500.0),
+                            "Node", 500.0),
                     },
                 ],
             }
@@ -111,7 +117,22 @@ impl VisTree {
                 }
                 *y += layout.height;
             }
-            VisTree::Branch { children } => {
+            VisTree::Node { children } => {
+                let bullet_offset_x = 7.5;
+                let bullet_offset_y = 7.5;
+                let bullet_size = 5.0;
+                let xx = (x + bullet_offset_x).floor() + 0.5;
+                let yy = (*y + bullet_offset_y).floor() + 0.5;
+                let rect = D2D1_RECT_F {
+                    left: xx,
+                    top: yy,
+                    right: xx + bullet_size,
+                    bottom: yy + bullet_size,
+                };
+                unsafe {
+                    ctx.render_target.DrawRectangle(
+                        &rect, ctx.text_brush.as_raw(), 1.0, null_mut());
+                }
                 for child in children {
                     child.draw(ctx, x + 20.0, y);
                 }
