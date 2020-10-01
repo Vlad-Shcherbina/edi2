@@ -15,7 +15,22 @@ use winapi::um::dcommon::*;
 use winapi::um::dcommon::{D2D1_POINT_2F, D2D1_RECT_F};
 use crate::win_win_reent::*;
 use crate::win_util::*;
-use crate::text_layout::TextLayout;
+use crate::text_layout::{TextLayout, CursorCoord};
+
+struct TextPos {
+    line: usize,
+    pos: usize,
+}
+
+struct Cursor {
+    path: Vec<usize>,
+    pos: TextPos,
+    sel: Option<Selection>,
+}
+
+struct Selection {
+    pos: TextPos,
+}
 
 enum VisTree {
     Leaf {
@@ -32,6 +47,7 @@ struct AppCtx {
     normal_text_format: ComPtr<IDWriteTextFormat>,
     code_text_format: ComPtr<IDWriteTextFormat>,
     text_brush: ComPtr<ID2D1Brush>,
+    cursor_brush: ComPtr<ID2D1Brush>,   
 }
 
 impl AppCtx {
@@ -43,12 +59,15 @@ impl AppCtx {
         let code_text_format = create_text_format(&dwrite_factory, "Consolas", 18.0);
         let text_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.8, g: 0.8, b: 0.8, a: 1.0 });
+        let cursor_brush = create_solid_brush(
+            &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
         AppCtx {
             render_target,
             dwrite_factory,
             normal_text_format,
             code_text_format,
             text_brush,
+            cursor_brush,
         }        
     }
 }
@@ -56,6 +75,7 @@ impl AppCtx {
 struct App {
     ctx: AppCtx,
     vis_forest: Vec<VisTree>,
+    cur: Cursor,
 }
 
 impl App {
@@ -92,7 +112,7 @@ impl App {
                         layout: TextLayout::new(
                             &ctx.dwrite_factory,
                             &ctx.normal_text_format,
-                            "Node", 500.0),
+                            "zzz\nNode", 500.0),
                     },
                 ],
             }
@@ -100,12 +120,68 @@ impl App {
         App {
             ctx,
             vis_forest,
+            cur: Cursor {
+                path: vec![],
+                pos: TextPos { line: 4, pos: 1 },
+                sel: None,
+            }
         }        
     }
 }
 
+fn draw_cursor(
+    rt: &ComPtr<ID2D1HwndRenderTarget>,
+    brush: &ComPtr<ID2D1Brush>,
+    x: f32, y: f32,
+    cc: &CursorCoord,
+) {
+    let x = (x + cc.x + 0.5).floor();
+    unsafe {
+        rt.DrawLine(
+            D2D1_POINT_2F { x, y: y + cc.top },
+            D2D1_POINT_2F { x, y: y + cc.top + cc.height },
+            brush.as_raw(),
+            2.0,  // stroke width,
+            null_mut(),  // stroke style
+        );
+    }
+}
+
+const INDENT: f32 = 20.0;
+
 impl VisTree {
-    fn draw(&self, ctx: &AppCtx, x: f32, y: &mut f32) {
+    fn size(&self) -> (f32, f32) {
+        let mut w = 0.0f32;
+        let mut h = 0.0f32;
+        match self {
+            VisTree::Leaf { layout } => {
+                let rects = layout.hit_test_text_range(
+                    0, layout.text.len(), /*include newline*/true);
+                for rect in rects {
+                    w = w.max(rect.left + rect.width);
+                    h = h.max(rect.top + rect.height);
+                }
+            }
+            VisTree::Node { children } => {
+                for child in children {
+                    let (ww, hh) = child.size();
+                    w = w.max(ww);
+                    h += hh;
+                }
+                w += INDENT;
+            }
+        }
+        (w, h)
+    }
+
+    fn draw(&self, ctx: &AppCtx, cur: &Cursor, x: f32, y: &mut f32, path: &mut Vec<usize>) {
+        let (&line, pth) = path.split_last().unwrap();
+        let cur_pos = if pth == cur.path && line == cur.pos.line {
+            Some(cur.pos.pos)
+        } else {
+            None
+        };
+
         match self {
             VisTree::Leaf { layout } => {
                 unsafe {
@@ -114,6 +190,10 @@ impl VisTree {
                         layout.raw.as_raw(),
                         ctx.text_brush.as_raw(),
                         D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
+                if let Some(pos) = cur_pos {
+                    let cc = layout.cursor_coord(pos);
+                    draw_cursor(&ctx.render_target, &ctx.cursor_brush, x, *y, &cc);
                 }
                 *y += layout.height;
             }
@@ -133,8 +213,30 @@ impl VisTree {
                     ctx.render_target.DrawRectangle(
                         &rect, ctx.text_brush.as_raw(), 1.0, null_mut());
                 }
-                for child in children {
-                    child.draw(ctx, x + 20.0, y);
+
+                if let Some(pos) = cur_pos {
+                    // TODO: get correct height from child
+                    let cc = match pos {
+                        0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
+                        1 => {
+                            let (w, h) = self.size();
+                            CursorCoord {
+                                x: w,
+                                top: h - 18.0,
+                                height: 18.0,
+                            }
+                        }
+                        _ => panic!("{}", pos),
+                    };
+                    draw_cursor(
+                        &ctx.render_target, &ctx.cursor_brush, x, *y,
+                        &cc);
+                }
+
+                for (i, child) in children.iter().enumerate() {
+                    path.push(i);
+                    child.draw(ctx, cur, x + INDENT, y, path);
+                    path.pop();
                 }
             }
         }
@@ -149,9 +251,13 @@ fn paint(app: &mut App) {
 
         let x = 10.0;
         let mut y = 10.0;
-        for vis_tree in &app.vis_forest {
-            vis_tree.draw(&app.ctx, x, &mut y);
+        let mut path = vec![];
+        for (i, vis_tree) in app.vis_forest.iter().enumerate() {
+            path.push(i);
+            vis_tree.draw(&app.ctx, &app.cur, x, &mut y, &mut path);
+            path.pop();
         }
+        assert!(path.is_empty());
 
         let hr = rt.EndDraw(null_mut(), null_mut());
         assert!(hr != D2DERR_RECREATE_TARGET, "TODO");
