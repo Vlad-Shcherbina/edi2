@@ -202,7 +202,7 @@ pub fn hit_test_text_range(
     text_layout: &ComPtr<IDWriteTextLayout>,
     start: usize, end: usize,
 ) -> Vec<DWRITE_HIT_TEST_METRICS> {
-    assert!(start <= end);
+    assert!(start <= end, "{} {}", start, end);
     let len = end - start;
     let mut metrics = vec![unsafe { std::mem::zeroed() }; 1];
     let mut actual_count = 0;

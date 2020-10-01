@@ -44,7 +44,7 @@ impl TextLayout {
         include_newline: bool,
     ) -> Vec<DWRITE_HIT_TEST_METRICS> {
         let wide_start = wide_len(&self.text[..start]);
-        let wide_end = wide_len(&self.text[start..end]);
+        let wide_end = wide_start + wide_len(&self.text[start..end]);
         let mut res = hit_test_text_range(&self.raw, wide_start, wide_end);
         if include_newline {
             assert_eq!(end, self.text.len());

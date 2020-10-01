@@ -17,6 +17,7 @@ use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::text_layout::{TextLayout, CursorCoord};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TextPos {
     line: usize,
     pos: usize,
@@ -47,7 +48,8 @@ struct AppCtx {
     normal_text_format: ComPtr<IDWriteTextFormat>,
     code_text_format: ComPtr<IDWriteTextFormat>,
     text_brush: ComPtr<ID2D1Brush>,
-    cursor_brush: ComPtr<ID2D1Brush>,   
+    cursor_brush: ComPtr<ID2D1Brush>,
+    sel_brush: ComPtr<ID2D1Brush>,
 }
 
 impl AppCtx {
@@ -61,6 +63,8 @@ impl AppCtx {
             &render_target, &D2D1_COLOR_F { r: 0.8, g: 0.8, b: 0.8, a: 1.0 });
         let cursor_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+        let sel_brush = create_solid_brush(
+            &render_target, &D2D1_COLOR_F { r: 0.3, g: 0.3, b: 0.4, a: 1.0 });
         AppCtx {
             render_target,
             dwrite_factory,
@@ -68,6 +72,7 @@ impl AppCtx {
             code_text_format,
             text_brush,
             cursor_brush,
+            sel_brush,
         }        
     }
 }
@@ -123,9 +128,11 @@ impl App {
             cur: Cursor {
                 path: vec![],
                 pos: TextPos { line: 4, pos: 1 },
-                sel: None,
+                sel: Some(Selection {
+                    pos: TextPos { line: 3, pos: 8 },
+                }),
             }
-        }        
+        }
     }
 }
 
@@ -175,15 +182,54 @@ impl VisTree {
     }
 
     fn draw(&self, ctx: &AppCtx, cur: &Cursor, x: f32, y: &mut f32, path: &mut Vec<usize>) {
-        let (&line, pth) = path.split_last().unwrap();
-        let cur_pos = if pth == cur.path && line == cur.pos.line {
-            Some(cur.pos.pos)
-        } else {
-            None
-        };
+        let (&line, pth) = path.split_last().unwrap();        
+        let mut cur_pos = None;
+        let mut sel = None;
+        if pth == cur.path {
+            if line == cur.pos.line {
+                cur_pos = Some(cur.pos.pos)
+            }
+            if let Some(s) = &cur.sel {
+                let sel_start = s.pos.min(cur.pos);
+                let sel_end = s.pos.max(cur.pos);
+                if sel_start.line <= line && line <= sel_end.line {
+                    let sel_start_pos = if sel_start.line == line {
+                        sel_start.pos
+                    } else {
+                        0
+                    };
+                    let len = match self {
+                        VisTree::Leaf { layout } => layout.text.len(),
+                        VisTree::Node { .. } => 1,
+                    };
+                    let (sel_end_pos, include_newline) = if sel_end.line == line {
+                        assert!(sel_end.pos <= len);
+                        (sel_end.pos, false)
+                    } else {
+                        (len, true)
+                    };
+                    sel = Some((sel_start_pos, sel_end_pos, include_newline));
+                }
+            }
+        }
 
         match self {
             VisTree::Leaf { layout } => {
+                if let Some((sel_start_pos, sel_end_pos, include_newline)) = sel {
+                    let rects = layout.hit_test_text_range(
+                        sel_start_pos, sel_end_pos, include_newline);
+                    for rect in rects {
+                        let rect = D2D1_RECT_F {
+                            left: x + rect.left,
+                            top: *y + rect.top,
+                            right: x + rect.left + rect.width,
+                            bottom : *y + rect.top + rect.height,
+                        };
+                        unsafe {
+                            ctx.render_target.FillRectangle(&rect, ctx.sel_brush.as_raw());
+                        }
+                    }
+                }
                 unsafe {
                     ctx.render_target.DrawTextLayout(
                         D2D1_POINT_2F { x, y: *y },
@@ -198,6 +244,19 @@ impl VisTree {
                 *y += layout.height;
             }
             VisTree::Node { children } => {
+                if let Some((0, 1, _)) = sel {
+                    let (w, h) = self.size();
+                    let rect = D2D1_RECT_F {
+                        left: x,
+                        top: *y,
+                        right: x + w,
+                        bottom : *y + h,
+                    };
+                    unsafe {
+                        ctx.render_target.FillRectangle(&rect, ctx.sel_brush.as_raw());
+                    }
+                }
+
                 let bullet_offset_x = 7.5;
                 let bullet_offset_y = 7.5;
                 let bullet_size = 5.0;
