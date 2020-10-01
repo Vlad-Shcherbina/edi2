@@ -145,20 +145,24 @@ pub fn create_hwnd_render_target(d2d_factory: &ComPtr<ID2D1Factory>, hwnd: HWND)
     }
 }
 
-pub fn create_solid_brush(rt: &ComPtr<ID2D1HwndRenderTarget>, color: D2D1_COLOR_F) -> ComPtr<ID2D1Brush> {
+pub fn create_solid_brush(rt: &ComPtr<ID2D1HwndRenderTarget>, color: &D2D1_COLOR_F) -> ComPtr<ID2D1Brush> {
     unsafe {
         let mut brush = null_mut();
-        let hr = rt.CreateSolidColorBrush(&color, null(), &mut brush);
+        let hr = rt.CreateSolidColorBrush(color, null(), &mut brush);
         assert!(hr == S_OK, "0x{:x}", hr);
         ComPtr::from_raw(brush)
     }.up()
 }
 
-pub fn create_text_format(dwrite_factory: &ComPtr<IDWriteFactory>, size: f32) -> ComPtr<IDWriteTextFormat> {
+pub fn create_text_format(
+    dwrite_factory: &ComPtr<IDWriteFactory>,
+    font_family_name: &str,
+    size: f32,
+) -> ComPtr<IDWriteTextFormat> {
     unsafe {
         let mut text_format = null_mut();
         let hr = dwrite_factory.CreateTextFormat(
-            "Consolas".to_wide_null().as_ptr(),
+            font_family_name.to_wide_null().as_ptr(),
             null_mut(),
             DWRITE_FONT_WEIGHT_REGULAR,
             DWRITE_FONT_STYLE_NORMAL,
