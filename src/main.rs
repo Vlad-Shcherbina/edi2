@@ -13,6 +13,7 @@ use winapi::um::d2d1::*;
 use winapi::um::dwrite::*;
 use winapi::um::dcommon::*;
 use winapi::um::dcommon::{D2D1_POINT_2F, D2D1_RECT_F};
+use win_msg_name::win_msg_name;
 use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::text_layout::{TextLayout, CursorCoord};
@@ -81,6 +82,7 @@ struct App {
     ctx: AppCtx,
     vis_forest: Vec<VisTree>,
     cur: Cursor,
+    y_offset: f32,
 }
 
 impl App {
@@ -131,8 +133,20 @@ impl App {
                 sel: Some(Selection {
                     pos: TextPos { line: 3, pos: 8 },
                 }),
-            }
+            },
+            y_offset: 10.0,
         }
+    }
+
+    fn scroll(&mut self, delta: f32) {
+        // TODO: use actual line height
+        self.y_offset += delta * 18.0;
+
+        self.y_offset = self.y_offset.min(10.0);
+
+        let height: f32 = self.vis_forest.iter().map(|t| t.size().1).sum();
+        let max_offset = 10.0 - height + self.vis_forest.last().unwrap().last_line_height();
+        self.y_offset = self.y_offset.max(max_offset);
     }
 }
 
@@ -157,6 +171,15 @@ fn draw_cursor(
 const INDENT: f32 = 20.0;
 
 impl VisTree {
+    fn last_line_height(&self) -> f32 {
+        match self {
+            VisTree::Leaf { layout } =>
+                layout.cursor_coord(layout.text.len()).height,
+            VisTree::Node { children } =>
+                children.last().unwrap().last_line_height(),
+        }
+    }
+
     fn size(&self) -> (f32, f32) {
         let mut w = 0.0f32;
         let mut h = 0.0f32;
@@ -309,7 +332,7 @@ fn paint(app: &mut App) {
         rt.Clear(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.2, a: 1.0 });
 
         let x = 10.0;
-        let mut y = 10.0;
+        let mut y = app.y_offset;
         let mut path = vec![];
         for (i, vis_tree) in app.vis_forest.iter().enumerate() {
             path.push(i);
@@ -331,13 +354,13 @@ impl WindowProcState for App {
         hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM,
     )-> Option<LRESULT> {
         if msg == WM_DESTROY {
-            eprintln!("{}", win_msg_name::win_msg_name(msg));
+            eprintln!("{}", win_msg_name(msg));
             unsafe {
                 PostQuitMessage(0);
             }
         }
         if msg == WM_SIZE {
-            println!("{}", win_msg_name::win_msg_name(msg));
+            println!("{}", win_msg_name(msg));
             let render_size = D2D_SIZE_U {
                 width: GET_X_LPARAM(lparam) as u32,
                 height: GET_Y_LPARAM(lparam) as u32,
@@ -348,8 +371,15 @@ impl WindowProcState for App {
             assert!(hr == S_OK, "0x{:x}", hr);
         }        
         if msg == WM_PAINT {
-            eprintln!("{}", win_msg_name::win_msg_name(msg));
+            eprintln!("{}", win_msg_name(msg));
             paint(&mut *sr.state_mut());
+        }
+        if msg == WM_MOUSEWHEEL {
+            let delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            println!("{} {}", win_msg_name(msg), delta);
+            let delta = f32::from(delta) / 120.0 * get_wheel_scroll_lines() as f32;
+            sr.state_mut().scroll(delta);
+            invalidate_rect(hwnd);
         }
         None
     }

@@ -240,3 +240,15 @@ pub fn invalidate_rect(hwnd: HWND) {
         assert!(res != 0, "{}", Error::last_os_error());
     }
 }
+
+pub fn get_wheel_scroll_lines() -> u32 {
+    let mut scroll_lines: UINT = 0;
+    let res = unsafe {
+        SystemParametersInfoW(
+            SPI_GETWHEELSCROLLLINES,
+            0,
+            &mut scroll_lines as *mut _ as *mut _,
+            0)};
+    assert!(res != 0, "{}", std::io::Error::last_os_error());
+    scroll_lines    
+}
