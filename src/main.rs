@@ -168,6 +168,7 @@ fn draw_cursor(
     }
 }
 
+const X_OFFSET: f32 = 10.0;
 const INDENT: f32 = 20.0;
 
 impl VisTree {
@@ -323,7 +324,63 @@ impl VisTree {
             }
         }
     }
+
+    fn accept(
+        &self,
+        visitor: &mut dyn VisTreeVisitor,
+        path: &mut Vec<usize>,
+        x: f32, y: &mut f32,
+    ) {
+        visitor.visit(path, self, x, *y);
+        match self {
+            VisTree::Leaf { layout } => {
+                *y += layout.height;
+            }
+            VisTree::Node { children } => {
+                Self::forest_accept(children, visitor, path, x + INDENT, y);
+            }
+        }
+    }
+
+    fn forest_accept(
+        trees: &[Self],
+        visitor: &mut dyn VisTreeVisitor,
+        path: &mut Vec<usize>,
+        x: f32, y: &mut f32,
+    ) {
+        for (i, tree) in trees.iter().enumerate() {
+            path.push(i);
+            tree.accept(visitor, path, x, y);
+            path.pop();
+        }
+    }
 }
+
+trait VisTreeVisitor {
+    fn visit(&mut self, path: &[usize], tree: &VisTree, x: f32, y: f32);
+}
+
+struct MouseClickVisitor {
+    x: f32,
+    y: f32,
+    result: Option<(Vec<usize>, TextPos)>,
+}
+
+impl VisTreeVisitor for MouseClickVisitor {
+    fn visit(&mut self, path: &[usize], tree: &VisTree, x: f32, y: f32) {
+        match tree {
+            VisTree::Leaf { layout } => {
+                if y <= self.y && self.y <= y + layout.height {
+                    let pos = layout.coords_to_pos(self.x - x, self.y - y);
+                    let (&line, path) = path.split_last().unwrap();
+                    self.result = Some((path.to_owned(), TextPos { line, pos }));
+                }
+            }
+            VisTree::Node { .. } => {}
+        }
+    }
+}
+
 
 fn paint(app: &mut App) {
     let rt = &app.ctx.render_target;
@@ -331,12 +388,11 @@ fn paint(app: &mut App) {
         rt.BeginDraw();
         rt.Clear(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.2, a: 1.0 });
 
-        let x = 10.0;
         let mut y = app.y_offset;
         let mut path = vec![];
         for (i, vis_tree) in app.vis_forest.iter().enumerate() {
             path.push(i);
-            vis_tree.draw(&app.ctx, &app.cur, x, &mut y, &mut path);
+            vis_tree.draw(&app.ctx, &app.cur, X_OFFSET, &mut y, &mut path);
             path.pop();
         }
         assert!(path.is_empty());
@@ -381,14 +437,38 @@ impl WindowProcState for App {
             sr.state_mut().scroll(delta);
             invalidate_rect(hwnd);
         }
+        if msg == WM_LBUTTONDOWN {
+            let x = GET_X_LPARAM(lparam);
+            let y = GET_Y_LPARAM(lparam);
+            println!("{} {} {}", win_msg_name(msg), x, y);
+            let mut v = MouseClickVisitor {
+                x: x as f32,
+                y: y as f32,
+                result: None,
+            };
+            let mut app = sr.state_mut();
+            let mut yy = app.y_offset;
+            VisTree::forest_accept(&app.vis_forest, &mut v, &mut vec![], X_OFFSET, &mut yy);
+            if let Some((path, pos)) = v.result {
+                app.cur = Cursor {
+                    path,
+                    pos,
+                    sel: None,
+                };
+                invalidate_rect(hwnd);
+            }
+        }
         None
     }
 }
 
 fn main() {
     let app = LazyState::new(App::new);
+    let arrow_cursor = load_cursor(IDC_IBEAM);
     unsafe {
-        let win_class = win_win::WindowClass::builder("e2 class").build().unwrap();
+        let win_class = win_win::WindowClass::builder("e2 class")
+            .cursor(arrow_cursor)
+            .build().unwrap();
         let hwnd = win_win::WindowBuilder::new(app, &win_class)
             .name("e2")
             .style(WS_OVERLAPPEDWINDOW)
