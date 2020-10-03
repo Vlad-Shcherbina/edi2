@@ -205,126 +205,6 @@ impl VisTree {
         (w, h)
     }
 
-    fn draw(&self, ctx: &AppCtx, cur: &Cursor, x: f32, y: &mut f32, path: &mut Vec<usize>) {
-        let (&line, pth) = path.split_last().unwrap();        
-        let mut cur_pos = None;
-        let mut sel = None;
-        if pth == cur.path {
-            if line == cur.pos.line {
-                cur_pos = Some(cur.pos.pos)
-            }
-            if let Some(s) = &cur.sel {
-                let sel_start = s.pos.min(cur.pos);
-                let sel_end = s.pos.max(cur.pos);
-                if sel_start.line <= line && line <= sel_end.line {
-                    let sel_start_pos = if sel_start.line == line {
-                        sel_start.pos
-                    } else {
-                        0
-                    };
-                    let len = match self {
-                        VisTree::Leaf { layout } => layout.text.len(),
-                        VisTree::Node { .. } => 1,
-                    };
-                    let (sel_end_pos, include_newline) = if sel_end.line == line {
-                        assert!(sel_end.pos <= len);
-                        (sel_end.pos, false)
-                    } else {
-                        (len, true)
-                    };
-                    sel = Some((sel_start_pos, sel_end_pos, include_newline));
-                }
-            }
-        }
-
-        match self {
-            VisTree::Leaf { layout } => {
-                if let Some((sel_start_pos, sel_end_pos, include_newline)) = sel {
-                    let rects = layout.hit_test_text_range(
-                        sel_start_pos, sel_end_pos, include_newline);
-                    for rect in rects {
-                        let rect = D2D1_RECT_F {
-                            left: x + rect.left,
-                            top: *y + rect.top,
-                            right: x + rect.left + rect.width,
-                            bottom : *y + rect.top + rect.height,
-                        };
-                        unsafe {
-                            ctx.render_target.FillRectangle(&rect, ctx.sel_brush.as_raw());
-                        }
-                    }
-                }
-                unsafe {
-                    ctx.render_target.DrawTextLayout(
-                        D2D1_POINT_2F { x, y: *y },
-                        layout.raw.as_raw(),
-                        ctx.text_brush.as_raw(),
-                        D2D1_DRAW_TEXT_OPTIONS_NONE);
-                }
-                if let Some(pos) = cur_pos {
-                    let cc = layout.cursor_coord(pos);
-                    draw_cursor(&ctx.render_target, &ctx.cursor_brush, x, *y, &cc);
-                }
-                *y += layout.height;
-            }
-            VisTree::Node { children } => {
-                if let Some((0, 1, _)) = sel {
-                    let (w, h) = self.size();
-                    let rect = D2D1_RECT_F {
-                        left: x,
-                        top: *y,
-                        right: x + w,
-                        bottom : *y + h,
-                    };
-                    unsafe {
-                        ctx.render_target.FillRectangle(&rect, ctx.sel_brush.as_raw());
-                    }
-                }
-
-                let bullet_offset_x = 7.5;
-                let bullet_offset_y = 7.5;
-                let bullet_size = 5.0;
-                let xx = (x + bullet_offset_x).floor() + 0.5;
-                let yy = (*y + bullet_offset_y).floor() + 0.5;
-                let rect = D2D1_RECT_F {
-                    left: xx,
-                    top: yy,
-                    right: xx + bullet_size,
-                    bottom: yy + bullet_size,
-                };
-                unsafe {
-                    ctx.render_target.DrawRectangle(
-                        &rect, ctx.text_brush.as_raw(), 1.0, null_mut());
-                }
-
-                if let Some(pos) = cur_pos {
-                    // TODO: get correct height from child
-                    let cc = match pos {
-                        0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
-                        1 => {
-                            let (w, h) = self.size();
-                            CursorCoord {
-                                x: w,
-                                top: h - 18.0,
-                                height: 18.0,
-                            }
-                        }
-                        _ => panic!("{}", pos),
-                    };
-                    draw_cursor(
-                        &ctx.render_target, &ctx.cursor_brush, x, *y,
-                        &cc);
-                }
-
-                for (i, child) in children.iter().enumerate() {
-                    path.push(i);
-                    child.draw(ctx, cur, x + INDENT, y, path);
-                    path.pop();
-                }
-            }
-        }
-    }
-
     fn accept(
         &self,
         visitor: &mut dyn VisTreeVisitor,
@@ -360,6 +240,123 @@ trait VisTreeVisitor {
     fn visit(&mut self, path: &[usize], tree: &VisTree, x: f32, y: f32);
 }
 
+impl<'a> VisTreeVisitor for DrawVisitor<'a> {
+    fn visit(&mut self, path: &[usize], tree: &VisTree, x: f32, y: f32) {
+        let (&line, pth) = path.split_last().unwrap();        
+        let mut cur_pos = None;
+        let mut sel = None;
+        if pth == self.cur.path {
+            if line == self.cur.pos.line {
+                cur_pos = Some(self.cur.pos.pos)
+            }
+            if let Some(s) = &self.cur.sel {
+                let sel_start = s.pos.min(self.cur.pos);
+                let sel_end = s.pos.max(self.cur.pos);
+                if sel_start.line <= line && line <= sel_end.line {
+                    let sel_start_pos = if sel_start.line == line {
+                        sel_start.pos
+                    } else {
+                        0
+                    };
+                    let len = match tree {
+                        VisTree::Leaf { layout } => layout.text.len(),
+                        VisTree::Node { .. } => 1,
+                    };
+                    let (sel_end_pos, include_newline) = if sel_end.line == line {
+                        assert!(sel_end.pos <= len);
+                        (sel_end.pos, false)
+                    } else {
+                        (len, true)
+                    };
+                    sel = Some((sel_start_pos, sel_end_pos, include_newline));
+                }
+            }
+        }
+
+        match tree {
+            VisTree::Leaf { layout } => {
+                if let Some((sel_start_pos, sel_end_pos, include_newline)) = sel {
+                    let rects = layout.hit_test_text_range(
+                        sel_start_pos, sel_end_pos, include_newline);
+                    for rect in rects {
+                        let rect = D2D1_RECT_F {
+                            left: x + rect.left,
+                            top: y + rect.top,
+                            right: x + rect.left + rect.width,
+                            bottom : y + rect.top + rect.height,
+                        };
+                        unsafe {
+                            self.ctx.render_target.FillRectangle(
+                                &rect, self.ctx.sel_brush.as_raw());
+                        }
+                    }
+                }
+                unsafe {
+                    self.ctx.render_target.DrawTextLayout(
+                        D2D1_POINT_2F { x, y },
+                        layout.raw.as_raw(),
+                        self.ctx.text_brush.as_raw(),
+                        D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
+                if let Some(pos) = cur_pos {
+                    let cc = layout.cursor_coord(pos);
+                    draw_cursor(&self.ctx.render_target, &self.ctx.cursor_brush, x, y, &cc);
+                }
+            }
+            VisTree::Node { .. } => {
+                if let Some((0, 1, _)) = sel {
+                    let (w, h) = tree.size();
+                    let rect = D2D1_RECT_F {
+                        left: x,
+                        top: y,
+                        right: x + w,
+                        bottom : y + h,
+                    };
+                    unsafe {
+                        self.ctx.render_target.FillRectangle(
+                            &rect, self.ctx.sel_brush.as_raw());
+                    }
+                }
+
+                let bullet_offset_x = 7.5;
+                let bullet_offset_y = 7.5;
+                let bullet_size = 5.0;
+                let xx = (x + bullet_offset_x).floor() + 0.5;
+                let yy = (y + bullet_offset_y).floor() + 0.5;
+                let rect = D2D1_RECT_F {
+                    left: xx,
+                    top: yy,
+                    right: xx + bullet_size,
+                    bottom: yy + bullet_size,
+                };
+                unsafe {
+                    self.ctx.render_target.DrawRectangle(
+                        &rect, self.ctx.text_brush.as_raw(), 1.0, null_mut());
+                }
+
+                if let Some(pos) = cur_pos {
+                    // TODO: get correct height from child
+                    let cc = match pos {
+                        0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
+                        1 => {
+                            let (w, h) = tree.size();
+                            CursorCoord {
+                                x: w,
+                                top: h - 18.0,
+                                height: 18.0,
+                            }
+                        }
+                        _ => panic!("{}", pos),
+                    };
+                    draw_cursor(
+                        &self.ctx.render_target, &self.ctx.cursor_brush,
+                        x, y, &cc);
+                }
+            }
+        }
+    }
+}
+
 struct MouseClickVisitor {
     x: f32,
     y: f32,
@@ -381,6 +378,10 @@ impl VisTreeVisitor for MouseClickVisitor {
     }
 }
 
+struct DrawVisitor<'a> {
+    ctx: &'a AppCtx,
+    cur: &'a Cursor,
+}
 
 fn paint(app: &mut App) {
     let rt = &app.ctx.render_target;
@@ -388,14 +389,12 @@ fn paint(app: &mut App) {
         rt.BeginDraw();
         rt.Clear(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.2, a: 1.0 });
 
+        let mut v = DrawVisitor {
+            ctx: &app.ctx,
+            cur: &app.cur,
+        };
         let mut y = app.y_offset;
-        let mut path = vec![];
-        for (i, vis_tree) in app.vis_forest.iter().enumerate() {
-            path.push(i);
-            vis_tree.draw(&app.ctx, &app.cur, X_OFFSET, &mut y, &mut path);
-            path.pop();
-        }
-        assert!(path.is_empty());
+        VisTree::forest_accept(&app.vis_forest, &mut v, &mut vec![], X_OFFSET, &mut y);
 
         let hr = rt.EndDraw(null_mut(), null_mut());
         assert!(hr != D2DERR_RECREATE_TARGET, "TODO");
