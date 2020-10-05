@@ -1,6 +1,7 @@
 mod win_util;
 pub mod win_win_reent;
 mod text_layout;
+mod util;
 
 use std::ptr::null_mut;
 use wio::com::ComPtr;
@@ -17,6 +18,7 @@ use win_msg_name::win_msg_name;
 use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::text_layout::{TextLayout, CursorCoord};
+use crate::util::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TextPos {
@@ -24,12 +26,14 @@ struct TextPos {
     pos: usize,
 }
 
+#[derive(Debug)]
 struct Cursor {
     path: Vec<usize>,
     pos: TextPos,
     sel: Option<Selection>,
 }
 
+#[derive(Debug)]
 struct Selection {
     pos: TextPos,
 }
@@ -121,15 +125,27 @@ impl App {
                             &ctx.normal_text_format,
                             "zzz\nNode", 500.0),
                     },
+                    VisTree::Leaf {
+                        layout: TextLayout::new(
+                            &ctx.dwrite_factory,
+                            &ctx.normal_text_format,
+                            "aaa", 500.0),
+                    },
                 ],
-            }
+            },
+            VisTree::Leaf {
+                layout: TextLayout::new(
+                    &ctx.dwrite_factory,
+                    &ctx.normal_text_format,
+                    "Stuff...", 500.0),
+            },
         ];
         App {
             ctx,
             vis_forest,
             cur: Cursor {
                 path: vec![],
-                pos: TextPos { line: 4, pos: 1 },
+                pos: TextPos { line: 4, pos: 0 },
                 sel: Some(Selection {
                     pos: TextPos { line: 3, pos: 8 },
                 }),
@@ -147,6 +163,133 @@ impl App {
         let height: f32 = self.vis_forest.iter().map(|t| t.size().1).sum();
         let max_offset = 10.0 - height + self.vis_forest.last().unwrap().last_line_height();
         self.y_offset = self.y_offset.max(max_offset);
+    }
+
+    // If the cursor is on a VisTree::Node and not on a line of text
+    // (which should only happen when selecting),
+    // move it to the inner line of text.
+    fn sink_cursor(&mut self) {
+        self.cur.sel = None;
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            f = match &f[idx] {
+                VisTree::Node { children } => children,
+                VisTree::Leaf { .. } => panic!(),
+            }
+        }
+        match &f[self.cur.pos.line] {
+            VisTree::Leaf { .. } => {}
+            t @ VisTree::Node { .. } => {
+                match self.cur.pos.pos {
+                    0 => {
+                        self.cur.path.push(self.cur.pos.line);
+                        self.cur.pos = TextPos { line: 0, pos: 0 };
+                    }
+                    1 => {
+                        let mut t = t;
+                        self.cur.path.push(self.cur.pos.line);
+                        loop {
+                            match t {
+                                VisTree::Node { children } => {
+                                    self.cur.path.push(children.len() - 1);
+                                    t = children.last().unwrap();
+                                }
+                                VisTree::Leaf { layout } => {
+                                    self.cur.pos = TextPos {
+                                        line: self.cur.path.pop().unwrap(),
+                                        pos: layout.text.len(),
+                                    };
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ => panic!("{:?}", self.cur),
+                }
+            }
+        }
+    }
+
+    fn left(&mut self) {
+        self.sink_cursor();
+        fn rec(f: &[VisTree], cur: &mut Cursor, i: usize) -> bool {
+            if i < cur.path.len() {
+                match &f[cur.path[i]] {
+                    VisTree::Node { children } => {
+                        if rec(&children, cur, i + 1) {
+                            true
+                        } else if cur.path[i] > 0 {
+                            cur.pos.line = cur.path[i] - 1;
+                            cur.pos.pos = f[cur.pos.line].len();
+                            cur.path.truncate(i);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    VisTree::Leaf { .. } => panic!(),
+                }
+            } else {
+                match &f[cur.pos.line] {
+                    VisTree::Leaf { layout } => {
+                        if cur.pos.pos > 0 {
+                            cur.pos.pos = prev_char_pos(&layout.text, cur.pos.pos).unwrap();
+                            true
+                        } else if cur.pos.line > 0 {
+                            cur.pos.line -= 1;
+                            cur.pos.pos = f[cur.pos.line].len();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+                }
+            }
+        }
+        rec(&self.vis_forest, &mut self.cur, 0);
+        self.sink_cursor();
+    }
+
+    fn right(&mut self) {
+        self.sink_cursor();
+        fn rec(f: &[VisTree], cur: &mut Cursor, i: usize) -> bool {
+            if i < cur.path.len() {
+                match &f[cur.path[i]] {
+                    VisTree::Node { children } => {
+                        if rec(&children, cur, i + 1) {
+                            true
+                        } else if cur.path[i] + 1 < f.len() {
+                            cur.pos.line = cur.path[i] + 1;
+                            cur.pos.pos = 0;
+                            cur.path.truncate(i);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    VisTree::Leaf { .. } => panic!(),
+                }
+            } else {
+                match &f[cur.pos.line] {
+                    VisTree::Leaf { layout } => {
+                        if cur.pos.pos < layout.text.len() {
+                            cur.pos.pos = next_char_pos(&layout.text, cur.pos.pos).unwrap();
+                            true
+                        } else if cur.pos.line + 1 < f.len() {
+                            cur.pos.line += 1;
+                            cur.pos.pos = 0;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+                }
+            }
+        }
+        rec(&self.vis_forest, &mut self.cur, 0);
+        self.sink_cursor();
     }
 }
 
@@ -172,6 +315,13 @@ const X_OFFSET: f32 = 10.0;
 const INDENT: f32 = 20.0;
 
 impl VisTree {
+    fn len(&self) -> usize {
+        match self {
+            VisTree::Leaf { layout } => layout.text.len(),
+            VisTree::Node { .. } => 1,
+        }
+    }
+
     fn last_line_height(&self) -> f32 {
         match self {
             VisTree::Leaf { layout } =>
@@ -258,15 +408,11 @@ impl<'a> VisTreeVisitor for DrawVisitor<'a> {
                     } else {
                         0
                     };
-                    let len = match tree {
-                        VisTree::Leaf { layout } => layout.text.len(),
-                        VisTree::Node { .. } => 1,
-                    };
                     let (sel_end_pos, include_newline) = if sel_end.line == line {
-                        assert!(sel_end.pos <= len);
+                        assert!(sel_end.pos <= tree.len());
                         (sel_end.pos, false)
                     } else {
-                        (len, true)
+                        (tree.len(), true)
                     };
                     sel = Some((sel_start_pos, sel_end_pos, include_newline));
                 }
@@ -456,6 +602,18 @@ impl WindowProcState for App {
                 };
                 invalidate_rect(hwnd);
             }
+        }
+        if msg == WM_KEYDOWN {
+            let key_code = wparam as i32;
+            println!("{} {}", win_msg_name(msg), key_code);
+            let mut app = sr.state_mut();
+            if key_code == VK_LEFT {
+                app.left();
+            }
+            if key_code == VK_RIGHT {
+                app.right();
+            }
+            invalidate_rect(hwnd);
         }
         None
     }
