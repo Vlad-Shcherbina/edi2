@@ -212,84 +212,53 @@ impl App {
 
     fn left(&mut self) {
         self.sink_cursor();
-        fn rec(f: &[VisTree], cur: &mut Cursor, i: usize) -> bool {
-            if i < cur.path.len() {
-                match &f[cur.path[i]] {
-                    VisTree::Node { children } => {
-                        if rec(&children, cur, i + 1) {
-                            true
-                        } else if cur.path[i] > 0 {
-                            cur.pos.line = cur.path[i] - 1;
-                            cur.pos.pos = f[cur.pos.line].len();
-                            cur.path.truncate(i);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    VisTree::Leaf { .. } => panic!(),
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            match &f[idx] {
+                VisTree::Leaf { .. } => panic!(),
+                VisTree::Node { children } => f = children,
+            }
+        }
+        match &f[self.cur.pos.line] {
+            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+            VisTree::Leaf { layout } => {
+                if let Some(pos) = prev_char_pos(&layout.text, self.cur.pos.pos) {
+                    self.cur.pos.pos = pos;
+                    return;
                 }
-            } else {
-                match &f[cur.pos.line] {
-                    VisTree::Leaf { layout } => {
-                        if cur.pos.pos > 0 {
-                            cur.pos.pos = prev_char_pos(&layout.text, cur.pos.pos).unwrap();
-                            true
-                        } else if cur.pos.line > 0 {
-                            cur.pos.line -= 1;
-                            cur.pos.pos = f[cur.pos.line].len();
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+                if let Some(prev_leaf) = prev_leaf(
+                    &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line) {
+                    self.cur.pos.pos = match prev_leaf {
+                        VisTree::Leaf { layout } => layout.text.len(),
+                        VisTree::Node { .. } => panic!(),
+                    };
                 }
             }
         }
-        rec(&self.vis_forest, &mut self.cur, 0);
-        self.sink_cursor();
     }
 
     fn right(&mut self) {
         self.sink_cursor();
-        fn rec(f: &[VisTree], cur: &mut Cursor, i: usize) -> bool {
-            if i < cur.path.len() {
-                match &f[cur.path[i]] {
-                    VisTree::Node { children } => {
-                        if rec(&children, cur, i + 1) {
-                            true
-                        } else if cur.path[i] + 1 < f.len() {
-                            cur.pos.line = cur.path[i] + 1;
-                            cur.pos.pos = 0;
-                            cur.path.truncate(i);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    VisTree::Leaf { .. } => panic!(),
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            match &f[idx] {
+                VisTree::Leaf { .. } => panic!(),
+                VisTree::Node { children } => f = children,
+            }
+        }
+        match &f[self.cur.pos.line] {
+            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+            VisTree::Leaf { layout } => {
+                if let Some(pos) = next_char_pos(&layout.text, self.cur.pos.pos) {
+                    self.cur.pos.pos = pos;
+                    return;
                 }
-            } else {
-                match &f[cur.pos.line] {
-                    VisTree::Leaf { layout } => {
-                        if cur.pos.pos < layout.text.len() {
-                            cur.pos.pos = next_char_pos(&layout.text, cur.pos.pos).unwrap();
-                            true
-                        } else if cur.pos.line + 1 < f.len() {
-                            cur.pos.line += 1;
-                            cur.pos.pos = 0;
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+                if let Some(_next_leaf) = next_leaf(
+                    &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line) {
+                    self.cur.pos.pos = 0;
                 }
             }
         }
-        rec(&self.vis_forest, &mut self.cur, 0);
-        self.sink_cursor();
     }
 }
 
@@ -384,6 +353,112 @@ impl VisTree {
             path.pop();
         }
     }
+}
+
+fn push_path_to_first_leaf<'a>(
+    t: &'a VisTree,
+    path: &mut Vec<usize>,
+) -> &'a VisTree {
+    match t {
+        VisTree::Leaf { .. } => t,
+        VisTree::Node { children } => {
+            match &children[0] {
+                t @ VisTree::Leaf { .. } => {
+                    path.push(0);
+                    t
+                }
+                VisTree::Node { .. } => panic!(),
+            }
+        }
+    }
+}
+
+fn push_path_to_last_leaf<'a>(
+    t: &'a VisTree,
+    path: &mut Vec<usize>,
+) -> &'a VisTree {
+    match t {
+        VisTree::Leaf { .. } => t,
+        VisTree::Node { children } => {
+            let mut f = children;
+            loop {
+                path.push(f.len() - 1);
+                match &f.last().unwrap() {
+                    leaf @ VisTree::Leaf { .. } => break leaf,
+                    VisTree::Node { children } => f = children,
+                }
+            }
+        }
+    }
+}
+
+
+fn next_leaf<'a>(
+    mut f: &'a [VisTree],
+    path: &mut Vec<usize>, line: &mut usize,
+) -> Option<&'a VisTree> {
+    let mut next = None;
+    dbg!(&path);
+    for (i, &idx) in path.iter().enumerate() {
+        if idx + 1 < f.len() {
+            next = Some((i, idx + 1, &f[idx + 1]));
+        }
+        match &f[idx] {
+            VisTree::Leaf { .. } => panic!(),
+            VisTree::Node { children } => f = children,
+        }
+    }
+    let tree = if *line + 1 < f.len() {
+        *line += 1;
+        &f[*line]
+    } else {
+        match next {
+            Some((len, idx, tree)) => {
+                path.truncate(len);
+                *line = idx;
+                tree
+            }
+            None => return None,
+        }
+    };
+    path.push(*line);
+    let leaf = push_path_to_first_leaf(tree, path);
+    *line = path.pop().unwrap();
+    Some(leaf)
+}
+
+fn prev_leaf<'a>(
+    mut f: &'a [VisTree],
+    path: &mut Vec<usize>, line: &mut usize,
+) -> Option<&'a VisTree> {
+    let mut next = None;
+    dbg!(&path);
+    for (i, &idx) in path.iter().enumerate() {
+        if idx > 0 {
+            next = Some((i, idx - 1, &f[idx - 1]));
+        }
+        match &f[idx] {
+            VisTree::Leaf { .. } => panic!(),
+            VisTree::Node { children } => f = children,
+        }
+    }
+    let tree = if *line > 0 {
+        *line -= 1;
+        &f[*line]
+    } else {
+        match next {
+            Some((len, idx, tree)) => {
+                path.truncate(len);
+                *line = idx;
+                tree
+            }
+            None => return None,
+        }
+    };
+    path.push(*line);
+    let leaf = push_path_to_last_leaf(tree, path);
+    *line = path.pop().unwrap();
+    Some(leaf)
 }
 
 trait VisTreeVisitor {
