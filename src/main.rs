@@ -1,3 +1,5 @@
+#![feature(bindings_after_at)]
+
 mod win_util;
 pub mod win_win_reent;
 mod text_layout;
@@ -31,6 +33,7 @@ struct Cursor {
     path: Vec<usize>,
     pos: TextPos,
     sel: Option<Selection>,
+    anchor_x: f32,
 }
 
 #[derive(Debug)]
@@ -140,7 +143,7 @@ impl App {
                     "Stuff...", 500.0),
             },
         ];
-        App {
+        let mut app = App {
             ctx,
             vis_forest,
             cur: Cursor {
@@ -149,9 +152,12 @@ impl App {
                 sel: Some(Selection {
                     pos: TextPos { line: 3, pos: 8 },
                 }),
+                anchor_x: 0.0,
             },
             y_offset: 10.0,
-        }
+        };
+        app.update_anchor();
+        app
     }
 
     fn scroll(&mut self, delta: f32) {
@@ -163,6 +169,18 @@ impl App {
         let height: f32 = self.vis_forest.iter().map(|t| t.size().1).sum();
         let max_offset = 10.0 - height + self.vis_forest.last().unwrap().last_line_height();
         self.y_offset = self.y_offset.max(max_offset);
+    }
+
+    fn update_anchor(&mut self) {
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            match &f[idx] {
+                VisTree::Leaf { .. } => panic!(),
+                VisTree::Node { children } => f = children,
+            }
+        }
+        self.cur.anchor_x = X_OFFSET + self.cur.path.len() as f32 * INDENT
+            + f[self.cur.pos.line].cursor_coord(self.cur.pos.pos).x;
     }
 
     // If the cursor is on a VisTree::Node and not on a line of text
@@ -256,6 +274,78 @@ impl App {
                 if let Some(_next_leaf) = next_leaf(
                     &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line) {
                     self.cur.pos.pos = 0;
+                }
+            }
+        }
+    }
+
+    fn up(&mut self) {
+        self.sink_cursor();
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            match &f[idx] {
+                VisTree::Leaf { .. } => panic!(),
+                VisTree::Node { children } => f = children,
+            }
+        }
+        match &f[self.cur.pos.line] {
+            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+            leaf @ VisTree::Leaf { layout } => {
+                let eps = 3.0;
+                let cc = leaf.cursor_coord(self.cur.pos.pos);
+                if cc.top - eps > 0.0 {
+                    let x = self.cur.anchor_x
+                        - (X_OFFSET + INDENT * self.cur.path.len() as f32);
+                    self.cur.pos.pos = layout.coords_to_pos(x, cc.top - eps);
+                } else {
+                    let prev_leaf = prev_leaf(
+                        &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line);
+                    if let Some(prev_leaf) = prev_leaf {
+                        let x = self.cur.anchor_x
+                            - (X_OFFSET + INDENT * self.cur.path.len() as f32);
+                        let y = prev_leaf.size().1 - eps;
+                        match prev_leaf {
+                            VisTree::Node { .. } => panic!(),
+                            VisTree::Leaf { layout } =>
+                                self.cur.pos.pos = layout.coords_to_pos(x, y),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn down(&mut self) {
+        self.sink_cursor();
+        let mut f = &self.vis_forest;
+        for &idx in &self.cur.path {
+            match &f[idx] {
+                VisTree::Leaf { .. } => panic!(),
+                VisTree::Node { children } => f = children,
+            }
+        }
+        match &f[self.cur.pos.line] {
+            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
+            leaf @ VisTree::Leaf { layout } => {
+                let eps = 3.0;
+                let cc = leaf.cursor_coord(self.cur.pos.pos);
+                if cc.top + cc.height + eps < leaf.size().1 {
+                    let x = self.cur.anchor_x
+                        - (X_OFFSET + INDENT * self.cur.path.len() as f32);
+                    self.cur.pos.pos = layout.coords_to_pos(x, cc.top + cc.height + eps);
+                } else {
+                    let next_leaf = next_leaf(
+                        &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line);
+                    if let Some(next_leaf) = next_leaf {
+                        let x = self.cur.anchor_x
+                            - (X_OFFSET + INDENT * self.cur.path.len() as f32);
+                        let y = eps;
+                        match next_leaf {
+                            VisTree::Node { .. } => panic!(),
+                            VisTree::Leaf { layout } =>
+                                self.cur.pos.pos = layout.coords_to_pos(x, y),
+                        }
+                    }
                 }
             }
         }
@@ -419,7 +509,6 @@ fn next_leaf<'a>(
     path: &mut Vec<usize>, line: &mut usize,
 ) -> Option<&'a VisTree> {
     let mut next = None;
-    dbg!(&path);
     for (i, &idx) in path.iter().enumerate() {
         if idx + 1 < f.len() {
             next = Some((i, idx + 1, &f[idx + 1]));
@@ -452,8 +541,7 @@ fn prev_leaf<'a>(
     mut f: &'a [VisTree],
     path: &mut Vec<usize>, line: &mut usize,
 ) -> Option<&'a VisTree> {
-    let mut next = None;
-    dbg!(&path);
+    let mut next = None; 
     for (i, &idx) in path.iter().enumerate() {
         if idx > 0 {
             next = Some((i, idx - 1, &f[idx - 1]));
@@ -676,7 +764,9 @@ impl WindowProcState for App {
                     path,
                     pos,
                     sel: None,
+                    anchor_x: 0.0,
                 };
+                app.update_anchor();
                 invalidate_rect(hwnd);
             }
         }
@@ -686,9 +776,17 @@ impl WindowProcState for App {
             let mut app = sr.state_mut();
             if key_code == VK_LEFT {
                 app.left();
+                app.update_anchor();
             }
             if key_code == VK_RIGHT {
                 app.right();
+                app.update_anchor();
+            }
+            if key_code == VK_UP {
+                app.up();
+            }
+            if key_code == VK_DOWN {
+                app.down();
             }
             invalidate_rect(hwnd);
         }
