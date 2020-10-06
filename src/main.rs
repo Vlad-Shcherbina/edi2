@@ -330,6 +330,49 @@ impl App {
             }
         }
     }
+
+    fn put_char(&mut self, c: char) {
+        assert!(self.cur.sel.is_none(), "TODO");
+
+        let (key, line) = locate_line(
+            self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
+            &self.texts);
+        let text = match &mut self.texts.get_mut(&key).unwrap()[line] {
+            Line::Text { text, .. } => text,
+            Line::Node { local_header, .. } => local_header,
+        };
+
+        text.insert(self.cur.pos.pos, c);
+        self.cur.pos.pos += c.len_utf8();
+    }
+}
+
+// returns (text key, line number)
+fn locate_line(
+    mut path: impl Iterator<Item=usize>,
+    texts: &HashMap<Option<NodeKey>, Vec<Line>>,
+) -> (Option<NodeKey>, usize) {
+    let mut key = None;
+    let mut idx = path.next().unwrap();
+    loop {
+        match path.next() {
+            None => break (key, idx),
+            Some(idx2) => {
+                match texts[&key][idx] {
+                    Line::Text { .. } => panic!(),
+                    Line::Node { key: k, .. } => {
+                        if idx2 == 0 {
+                            assert!(path.next().is_none());
+                            break (key, idx);
+                        } else {
+                            idx = idx2 - 1;
+                            key = Some(k);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn compute_vis_forest(
@@ -479,6 +522,17 @@ impl WindowProcState for App {
             }
             if key_code == VK_DOWN {
                 app.down();
+            }
+            invalidate_rect(hwnd);
+        }
+        if msg == WM_CHAR {
+            let c = std::char::from_u32(wparam as u32).unwrap();
+            println!("{} {:?}", win_msg_name(msg), c);
+            let mut app = sr.state_mut();
+            if wparam >= 32 {
+                app.put_char(c);
+                app.update_vis_forest();
+                app.update_anchor();
             }
             invalidate_rect(hwnd);
         }
