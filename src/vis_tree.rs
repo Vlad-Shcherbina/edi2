@@ -1,5 +1,5 @@
 use crate::text_layout::{TextLayout, CursorCoord};
-use crate::INDENT;
+use crate::gfx::INDENT;
 
 pub enum VisTree {
     Leaf {
