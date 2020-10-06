@@ -7,6 +7,7 @@ mod vis_tree;
 pub mod gfx;
 mod util;
 
+use std::collections::HashMap;
 use std::ptr::null_mut;
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
@@ -42,6 +43,19 @@ struct Cursor {
 #[derive(Debug)]
 struct Selection {
     pos: TextPos,
+}
+
+type NodeKey = usize;
+
+enum Line {
+    Text {
+        text: String,
+        monospace: bool,
+    },
+    Node {
+        local_header: String,
+        key: NodeKey,
+    },
 }
 
 struct AppCtx {
@@ -84,74 +98,46 @@ struct App {
     vis_forest: Vec<VisTree>,
     cur: Cursor,
     y_offset: f32,
+
+    texts: HashMap<Option<NodeKey>, Vec<Line>>,
+    // texts[None] is the root
 }
 
 impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
-        let vis_forest = vec![
-            VisTree::Leaf {
-                layout: TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.normal_text_format,
-                    "Stuff", 500.0),
-            },
-            VisTree::Leaf {
-                layout: TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.code_text_format,
-                    "if name == '__main__':", 500.0),
-            },
-            VisTree::Leaf {
-                layout: TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.code_text_format,
-                    "    print('hello')", 500.0),
-            },
-            VisTree::Leaf {
-                layout: TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.normal_text_format,
-                    "Stuff...", 500.0),
-            },
-            VisTree::Node {
-                children: vec![
-                    VisTree::Leaf {
-                        layout: TextLayout::new(
-                            &ctx.dwrite_factory,
-                            &ctx.normal_text_format,
-                            "zzz\nNode", 500.0),
-                    },
-                    VisTree::Leaf {
-                        layout: TextLayout::new(
-                            &ctx.dwrite_factory,
-                            &ctx.normal_text_format,
-                            "aaa", 500.0),
-                    },
-                ],
-            },
-            VisTree::Leaf {
-                layout: TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.normal_text_format,
-                    "Stuff...", 500.0),
-            },
-        ];
+        let mut texts = HashMap::new();
+        texts.insert(None, vec![
+            Line::Text { text: "Stuff".to_owned(), monospace: false },
+            Line::Text { text: "if name == '__main__':".to_owned(), monospace: true },
+            Line::Text { text: "    print('hello')".to_owned(), monospace: true },
+            Line::Text { text: "Stuff...".to_owned(), monospace: false },
+            Line::Node { local_header: "zzz\nNode".to_owned(), key: 0 },
+            Line::Text { text: "Stuff...".to_owned(), monospace: false },
+        ]);
+        texts.insert(Some(0), vec![
+            Line::Text { text: "aaaa".to_owned(), monospace: false },
+        ]);
         let mut app = App {
             ctx,
-            vis_forest,
+            vis_forest: vec![],
             cur: Cursor {
                 path: vec![],
-                pos: TextPos { line: 4, pos: 0 },
-                sel: Some(Selection {
-                    pos: TextPos { line: 3, pos: 8 },
-                }),
+                pos: TextPos { line: 0, pos: 0 },
+                sel: None,
                 anchor_x: 0.0,
             },
             y_offset: 10.0,
+            texts,
         };
+        app.update_vis_forest();
         app.update_anchor();
         app
+    }
+
+    fn update_vis_forest(&mut self) {
+        self.vis_forest.clear();
+        compute_vis_forest(&self.ctx, None, &self.texts, &mut self.vis_forest);
     }
 
     fn scroll(&mut self, delta: f32) {
@@ -341,6 +327,39 @@ impl App {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+fn compute_vis_forest(
+    ctx: &AppCtx,
+    key: Option<NodeKey>,
+    texts: &HashMap<Option<NodeKey>, Vec<Line>>,
+    forest: &mut Vec<VisTree>,
+) {
+    let text = &texts[&key];
+    for line in text {
+        match line {
+            Line::Text { text, monospace } => {
+                let layout = TextLayout::new(
+                    &ctx.dwrite_factory,
+                    if *monospace {
+                        &ctx.code_text_format
+                    } else {
+                        &ctx.normal_text_format
+                    },
+                    text, 500.0);
+                forest.push(VisTree::Leaf { layout });
+            }
+            Line::Node { local_header, key } => {
+                let layout = TextLayout::new(
+                    &ctx.dwrite_factory,
+                    &ctx.normal_text_format,
+                    local_header, 500.0);
+                let mut children = vec![VisTree::Leaf { layout }];
+                compute_vis_forest(ctx, Some(*key), texts, &mut children);
+                forest.push(VisTree::Node { children });
             }
         }
     }
