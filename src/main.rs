@@ -353,6 +353,27 @@ impl VisTree {
             path.pop();
         }
     }
+
+    fn cursor_coord(&self, pos: usize) -> CursorCoord {
+        match self {
+            VisTree::Leaf { layout } => layout.cursor_coord(pos),
+            VisTree::Node { .. } => {
+                // TODO: get correct cursor height from child
+                match pos {
+                    0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
+                    1 => {
+                        let (w, h) = self.size();
+                        CursorCoord {
+                            x: w,
+                            top: h - 18.0,
+                            height: 18.0,
+                        }
+                    }
+                    _ => panic!("{}", pos),
+                }
+            }
+        }
+    }
 }
 
 fn push_path_to_first_leaf<'a>(
@@ -519,10 +540,6 @@ impl<'a> VisTreeVisitor for DrawVisitor<'a> {
                         self.ctx.text_brush.as_raw(),
                         D2D1_DRAW_TEXT_OPTIONS_NONE);
                 }
-                if let Some(pos) = cur_pos {
-                    let cc = layout.cursor_coord(pos);
-                    draw_cursor(&self.ctx.render_target, &self.ctx.cursor_brush, x, y, &cc);
-                }
             }
             VisTree::Node { .. } => {
                 if let Some((0, 1, _)) = sel {
@@ -554,26 +571,11 @@ impl<'a> VisTreeVisitor for DrawVisitor<'a> {
                     self.ctx.render_target.DrawRectangle(
                         &rect, self.ctx.text_brush.as_raw(), 1.0, null_mut());
                 }
-
-                if let Some(pos) = cur_pos {
-                    // TODO: get correct height from child
-                    let cc = match pos {
-                        0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
-                        1 => {
-                            let (w, h) = tree.size();
-                            CursorCoord {
-                                x: w,
-                                top: h - 18.0,
-                                height: 18.0,
-                            }
-                        }
-                        _ => panic!("{}", pos),
-                    };
-                    draw_cursor(
-                        &self.ctx.render_target, &self.ctx.cursor_brush,
-                        x, y, &cc);
-                }
             }
+        }
+        if let Some(pos) = cur_pos {
+            let cc = tree.cursor_coord(pos);
+            draw_cursor(&self.ctx.render_target, &self.ctx.cursor_brush, x, y, &cc);
         }
     }
 }
