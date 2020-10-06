@@ -345,6 +345,38 @@ impl App {
         text.insert(self.cur.pos.pos, c);
         self.cur.pos.pos += c.len_utf8();
     }
+
+    fn enter(&mut self) {
+        assert!(self.cur.sel.is_none(), "TODO");
+        let (key, line) = locate_line(
+            self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
+            &self.texts);
+
+        let text = self.texts.get_mut(&key).unwrap();
+        match text[line] {
+            Line::Text { text: ref mut t, monospace } => {
+                let tail = t[self.cur.pos.pos..].to_owned();
+                t.truncate(self.cur.pos.pos);
+                text.insert(line + 1, Line::Text {
+                    text: tail,
+                    monospace,
+                });
+                self.cur.pos.line += 1;
+                self.cur.pos.pos = 0;
+            }
+            Line::Node { ref mut local_header, key } => {
+                let tail = local_header[self.cur.pos.pos..].to_owned();
+                local_header.truncate(self.cur.pos.pos);
+                self.texts.get_mut(&Some(key)).unwrap().insert(0, Line::Text {
+                    text: tail,
+                    monospace: false,
+                });
+                self.cur.pos.line += 1;
+                self.cur.pos.pos = 0;
+                // TODO: make sure this tree is expanded
+            }
+        };
+    }
 }
 
 // returns (text key, line number)
@@ -531,6 +563,11 @@ impl WindowProcState for App {
             let mut app = sr.state_mut();
             if wparam >= 32 {
                 app.put_char(c);
+                app.update_vis_forest();
+                app.update_anchor();
+            }
+            if c == '\r' {
+                app.enter();
                 app.update_vis_forest();
                 app.update_anchor();
             }
