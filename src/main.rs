@@ -58,6 +58,14 @@ enum Line {
     },
 }
 
+// /Text/ is a line (paragraph) of text.
+// /Note/ is a collection of lines.
+// /Node/ is a note with a bullet (that is, any note except the root one).
+
+type Note = Vec<Line>;
+type Notes = HashMap<Option<NodeKey>, Note>;
+// None is the root note
+
 struct AppCtx {
     render_target: ComPtr<ID2D1HwndRenderTarget>,
     dwrite_factory: ComPtr<IDWriteFactory>,
@@ -99,15 +107,14 @@ struct App {
     cur: Cursor,
     y_offset: f32,
 
-    texts: HashMap<Option<NodeKey>, Vec<Line>>,
-    // texts[None] is the root
+    notes: HashMap<Option<NodeKey>, Vec<Line>>,
 }
 
 impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
-        let mut texts = HashMap::new();
-        texts.insert(None, vec![
+        let mut notes = HashMap::new();
+        notes.insert(None, vec![
             Line::Text { text: "Stuff".to_owned(), monospace: false },
             Line::Text { text: "if name == '__main__':".to_owned(), monospace: true },
             Line::Text { text: "    print('hello')".to_owned(), monospace: true },
@@ -115,7 +122,7 @@ impl App {
             Line::Node { local_header: "zzz\nNode".to_owned(), key: 0 },
             Line::Text { text: "Stuff...".to_owned(), monospace: false },
         ]);
-        texts.insert(Some(0), vec![
+        notes.insert(Some(0), vec![
             Line::Text { text: "aaaa".to_owned(), monospace: false },
         ]);
         let mut app = App {
@@ -128,7 +135,7 @@ impl App {
                 anchor_x: 0.0,
             },
             y_offset: 10.0,
-            texts,
+            notes,
         };
         app.update_vis_forest();
         app.update_anchor();
@@ -137,7 +144,7 @@ impl App {
 
     fn update_vis_forest(&mut self) {
         self.vis_forest.clear();
-        compute_vis_forest(&self.ctx, None, &self.texts, &mut self.vis_forest);
+        compute_vis_forest(&self.ctx, None, &self.notes, &mut self.vis_forest);
     }
 
     fn scroll(&mut self, delta: f32) {
@@ -163,7 +170,7 @@ impl App {
             + f[self.cur.pos.line].cursor_coord(self.cur.pos.pos).x;
     }
 
-    // If the cursor is on a VisTree::Node and not on a line of text
+    // If the cursor is on a VisTree::Node boundary and not on a line of text
     // (which should only happen when selecting),
     // move it to the inner line of text.
     fn sink_cursor(&mut self) {
@@ -336,8 +343,8 @@ impl App {
 
         let (key, line) = locate_line(
             self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
-            &self.texts);
-        let text = match &mut self.texts.get_mut(&key).unwrap()[line] {
+            &self.notes);
+        let text = match &mut self.notes.get_mut(&key).unwrap()[line] {
             Line::Text { text, .. } => text,
             Line::Node { local_header, .. } => local_header,
         };
@@ -350,14 +357,14 @@ impl App {
         assert!(self.cur.sel.is_none(), "TODO");
         let (key, line) = locate_line(
             self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
-            &self.texts);
+            &self.notes);
 
-        let text = self.texts.get_mut(&key).unwrap();
-        match text[line] {
-            Line::Text { text: ref mut t, monospace } => {
-                let tail = t[self.cur.pos.pos..].to_owned();
-                t.truncate(self.cur.pos.pos);
-                text.insert(line + 1, Line::Text {
+        let note = self.notes.get_mut(&key).unwrap();
+        match note[line] {
+            Line::Text { ref mut text, monospace } => {
+                let tail = text[self.cur.pos.pos..].to_owned();
+                text.truncate(self.cur.pos.pos);
+                note.insert(line + 1, Line::Text {
                     text: tail,
                     monospace,
                 });
@@ -367,7 +374,7 @@ impl App {
             Line::Node { ref mut local_header, key } => {
                 let tail = local_header[self.cur.pos.pos..].to_owned();
                 local_header.truncate(self.cur.pos.pos);
-                self.texts.get_mut(&Some(key)).unwrap().insert(0, Line::Text {
+                self.notes.get_mut(&Some(key)).unwrap().insert(0, Line::Text {
                     text: tail,
                     monospace: false,
                 });
@@ -382,7 +389,7 @@ impl App {
 // returns (text key, line number)
 fn locate_line(
     mut path: impl Iterator<Item=usize>,
-    texts: &HashMap<Option<NodeKey>, Vec<Line>>,
+    notes: &Notes,
 ) -> (Option<NodeKey>, usize) {
     let mut key = None;
     let mut idx = path.next().unwrap();
@@ -390,7 +397,7 @@ fn locate_line(
         match path.next() {
             None => break (key, idx),
             Some(idx2) => {
-                match texts[&key][idx] {
+                match notes[&key][idx] {
                     Line::Text { .. } => panic!(),
                     Line::Node { key: k, .. } => {
                         if idx2 == 0 {
@@ -410,10 +417,10 @@ fn locate_line(
 fn compute_vis_forest(
     ctx: &AppCtx,
     key: Option<NodeKey>,
-    texts: &HashMap<Option<NodeKey>, Vec<Line>>,
+    notes: &Notes,
     forest: &mut Vec<VisTree>,
 ) {
-    let text = &texts[&key];
+    let text = &notes[&key];
     for line in text {
         match line {
             Line::Text { text, monospace } => {
@@ -433,7 +440,7 @@ fn compute_vis_forest(
                     &ctx.normal_text_format,
                     local_header, 500.0);
                 let mut children = vec![VisTree::Leaf { layout }];
-                compute_vis_forest(ctx, Some(*key), texts, &mut children);
+                compute_vis_forest(ctx, Some(*key), notes, &mut children);
                 forest.push(VisTree::Node { children });
             }
         }
