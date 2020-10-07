@@ -45,7 +45,7 @@ struct Selection {
     pos: TextPos,
 }
 
-type NodeKey = usize;
+type NodeKey = i32;
 
 enum Line {
     Text {
