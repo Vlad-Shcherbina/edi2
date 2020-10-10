@@ -158,13 +158,15 @@ pub fn create_text_format(
     dwrite_factory: &ComPtr<IDWriteFactory>,
     font_family_name: &str,
     size: f32,
+    bold: bool,
 ) -> ComPtr<IDWriteTextFormat> {
     unsafe {
         let mut text_format = null_mut();
         let hr = dwrite_factory.CreateTextFormat(
             font_family_name.to_wide_null().as_ptr(),
             null_mut(),
-            DWRITE_FONT_WEIGHT_REGULAR,
+            if bold { DWRITE_FONT_WEIGHT_BOLD }
+            else { DWRITE_FONT_WEIGHT_REGULAR },
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             size,

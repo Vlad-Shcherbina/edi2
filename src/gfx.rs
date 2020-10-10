@@ -26,7 +26,7 @@ impl Node {
                 Line::Node { local_header, .. } => 
                     TextLayout::new(
                         &ctx.dwrite_factory,
-                        &ctx.normal_text_format,
+                        &ctx.header_text_format,
                         local_header, 500.0),
             }
         })

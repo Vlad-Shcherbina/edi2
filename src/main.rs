@@ -31,6 +31,7 @@ use crate::owned_ref::{Owned, Refed};
 struct AppCtx {
     render_target: ComPtr<ID2D1HwndRenderTarget>,
     dwrite_factory: ComPtr<IDWriteFactory>,
+    header_text_format: ComPtr<IDWriteTextFormat>,
     normal_text_format: ComPtr<IDWriteTextFormat>,
     code_text_format: ComPtr<IDWriteTextFormat>,
     text_brush: ComPtr<ID2D1Brush>,
@@ -43,8 +44,9 @@ impl AppCtx {
         let d2d_factory = create_d2d_factory();
         let render_target = create_hwnd_render_target(&d2d_factory, hwnd);
         let dwrite_factory = create_dwrite_factory();
-        let normal_text_format = create_text_format(&dwrite_factory, "Arial", 18.0);
-        let code_text_format = create_text_format(&dwrite_factory, "Consolas", 18.0);
+        let header_text_format = create_text_format(&dwrite_factory, "Arial", 18.0, true);
+        let normal_text_format = create_text_format(&dwrite_factory, "Arial", 18.0, false);
+        let code_text_format = create_text_format(&dwrite_factory, "Consolas", 18.0, false);
         let text_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.8, g: 0.8, b: 0.8, a: 1.0 });
         let cursor_brush = create_solid_brush(
@@ -54,6 +56,7 @@ impl AppCtx {
         AppCtx {
             render_target,
             dwrite_factory,
+            header_text_format,
             normal_text_format,
             code_text_format,
             text_brush,
