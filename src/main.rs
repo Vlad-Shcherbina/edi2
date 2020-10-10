@@ -1,13 +1,16 @@
 #![feature(bindings_after_at)]
+#![allow(clippy::many_single_char_names)]
 
 mod win_util;
 pub mod win_win_reent;
 mod text_layout;
-mod vis_tree;
 pub mod gfx;
 mod util;
+pub mod owned_ref;
+pub mod types;
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::ptr::null_mut;
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
@@ -21,50 +24,9 @@ use winapi::um::dcommon::*;
 use win_msg_name::win_msg_name;
 use crate::win_win_reent::*;
 use crate::win_util::*;
-use crate::text_layout::TextLayout;
 use crate::util::*;
-use crate::vis_tree::{VisTree, VisTreeVisitor, next_leaf, prev_leaf};
-use crate::gfx::{X_OFFSET, INDENT, DrawVisitor};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct TextPos {
-    line: usize,
-    pos: usize,
-}
-
-#[derive(Debug)]
-struct Cursor {
-    path: Vec<usize>,
-    pos: TextPos,
-    sel: Option<Selection>,
-    anchor_x: f32,
-}
-
-#[derive(Debug)]
-struct Selection {
-    pos: TextPos,
-}
-
-type NodeKey = i32;
-
-enum Line {
-    Text {
-        text: String,
-        monospace: bool,
-    },
-    Node {
-        local_header: String,
-        key: NodeKey,
-    },
-}
-
-// /Text/ is a line (paragraph) of text.
-// /Note/ is a collection of lines.
-// /Node/ is a note with a bullet (that is, any note except the root one).
-
-type Note = Vec<Line>;
-type Notes = HashMap<Option<NodeKey>, Note>;
-// None is the root note
+use crate::types::*;
+use crate::owned_ref::{Owned, Refed};
 
 struct AppCtx {
     render_target: ComPtr<ID2D1HwndRenderTarget>,
@@ -101,73 +63,138 @@ impl AppCtx {
     }
 }
 
+pub struct Cur {
+    pub block: Refed<Block>,
+    pub line: usize,
+    pub pos: usize,
+    pub anchor_x: f32,
+    pub sel: Option<Sel>,
+}
+
+pub struct Sel {
+    pub pos: usize,
+    pub line: usize,
+}
+
 struct App {
     ctx: AppCtx,
-    vis_forest: Vec<VisTree>,
-    cur: Cursor,
-    y_offset: f32,
 
-    notes: HashMap<Option<NodeKey>, Vec<Line>>,
+    y_offset: f32,
+    root_block: Owned<Block>,
+    cur: Cur,
+}
+
+fn expand_block(block: &Refed<Block>) {
+    let b = &mut *block.borrow_mut();
+    assert!(!b.expanded);
+    b.expanded = true;
+    assert_eq!(b.children.len(), 1);
+    let node = b.node.borrow();
+    for line in &node.lines {
+        match line.line {
+            Line::Text { .. } => b.children.push(BlockChild::Leaf),
+            Line::Node { node: ref child_node, .. } => {
+                let child_block = Owned::new(Block {
+                    expanded: false,
+                    depth: b.depth + 1,
+                    parent_idx: Some((Refed::clone(block), b.children.len())),
+                    node: Rc::clone(child_node),
+                    children: vec![BlockChild::Leaf],
+                });
+                child_node.borrow_mut().blocks.push(child_block.make_ref());
+                b.children.push(BlockChild::Block(child_block));
+            }
+        }
+    }
+}
+
+fn text_line(text: &str, monospace: bool) -> LineWithLayout {
+    LineWithLayout {
+        line: Line::Text {
+            text: text.to_owned(),
+            monospace,
+        },
+        layout: None,
+    }
+}
+fn node_line(local_header: &str, node: &Rc<RefCell<Node>>) -> LineWithLayout {
+    LineWithLayout {
+        line: Line::Node {
+            local_header: local_header.to_owned(),
+            node: Rc::clone(node),
+        },
+        layout: None,
+    }
 }
 
 impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
-        let mut notes = HashMap::new();
-        notes.insert(None, vec![
-            Line::Text { text: "Stuff".to_owned(), monospace: false },
-            Line::Text { text: "if name == '__main__':".to_owned(), monospace: true },
-            Line::Text { text: "    print('hello')".to_owned(), monospace: true },
-            Line::Text { text: "Stuff...".to_owned(), monospace: false },
-            Line::Node { local_header: "zzz\nNode".to_owned(), key: 0 },
-            Line::Text { text: "Stuff...".to_owned(), monospace: false },
-        ]);
-        notes.insert(Some(0), vec![
-            Line::Text { text: "aaaa".to_owned(), monospace: false },
-        ]);
+
+        let node1 = Rc::new(RefCell::new(Node {
+            lines: vec![
+                text_line("aaaa", false),
+            ],
+            blocks: vec![],
+        }));
+
+        let root_node = Rc::new(RefCell::new(Node {
+            lines: vec![
+                text_line("Stuff", false),
+                text_line("if name == '__main__':", true),
+                text_line("    print('hello')", true),
+                text_line("Stuff...", false),
+                node_line("zzz\nnode", &node1),
+                text_line("Stuff.", false),
+            ],
+            blocks: vec![],
+        }));
+        let root_block = Owned::new(Block {
+            depth: 0,
+            parent_idx: None,
+            node: Rc::clone(&root_node),
+            expanded: false,
+            children: vec![BlockChild::Leaf],
+        });
+        root_node.borrow_mut().blocks.push(root_block.make_ref());
+
+        expand_block(&root_block.make_ref());
+        for block in &node1.borrow().blocks {
+            expand_block(block);
+        }
+
         let mut app = App {
             ctx,
-            vis_forest: vec![],
-            cur: Cursor {
-                path: vec![],
-                pos: TextPos { line: 0, pos: 0 },
-                sel: None,
+            cur: Cur {
+                block: root_block.make_ref(),
+                line: 5,
+                pos: 1,
                 anchor_x: 0.0,
+                sel: Some(Sel {
+                    line: 5,
+                    pos: 0,
+                })
             },
+            root_block,
             y_offset: 10.0,
-            notes,
         };
-        app.update_vis_forest();
         app.update_anchor();
         app
-    }
-
-    fn update_vis_forest(&mut self) {
-        self.vis_forest.clear();
-        compute_vis_forest(&self.ctx, None, &self.notes, &mut self.vis_forest);
     }
 
     fn scroll(&mut self, delta: f32) {
         // TODO: use actual line height
         self.y_offset += delta * 18.0;
-
         self.y_offset = self.y_offset.min(10.0);
-
-        let height: f32 = self.vis_forest.iter().map(|t| t.size().1).sum();
-        let max_offset = 10.0 - height + self.vis_forest.last().unwrap().last_line_height();
+        let height = self.root_block.borrow().size(&self.ctx).1;
+        dbg!(self.root_block.borrow().last_line_height(&self.ctx));
+        let max_offset = 10.0 - height + self.root_block.borrow().last_line_height(&self.ctx);
         self.y_offset = self.y_offset.max(max_offset);
     }
 
     fn update_anchor(&mut self) {
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            match &f[idx] {
-                VisTree::Leaf { .. } => panic!(),
-                VisTree::Node { children } => f = children,
-            }
-        }
-        self.cur.anchor_x = X_OFFSET + self.cur.path.len() as f32 * INDENT
-            + f[self.cur.pos.line].cursor_coord(self.cur.pos.pos).x;
+        self.cur.anchor_x = self.cur.block.borrow().abs_cur_x(
+            self.cur.line, self.cur.pos, &self.ctx);
     }
 
     // If the cursor is on a VisTree::Node boundary and not on a line of text
@@ -175,41 +202,27 @@ impl App {
     // move it to the inner line of text.
     fn sink_cursor(&mut self) {
         self.cur.sel = None;
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            f = match &f[idx] {
-                VisTree::Node { children } => children,
-                VisTree::Leaf { .. } => panic!(),
-            }
-        }
-        match &f[self.cur.pos.line] {
-            VisTree::Leaf { .. } => {}
-            t @ VisTree::Node { .. } => {
-                match self.cur.pos.pos {
+        let b = self.cur.block.borrow();
+        match b.children[self.cur.line] {
+            BlockChild::Leaf => {},
+            BlockChild::Block(ref child_block) => {
+                match self.cur.pos {
                     0 => {
-                        self.cur.path.push(self.cur.pos.line);
-                        self.cur.pos = TextPos { line: 0, pos: 0 };
+                        let child_block = child_block.make_ref();
+                        drop(b);
+                        self.cur.block = child_block;
+                        self.cur.line = 0;
+                        self.cur.pos = 0;
                     }
                     1 => {
-                        let mut t = t;
-                        self.cur.path.push(self.cur.pos.line);
-                        loop {
-                            match t {
-                                VisTree::Node { children } => {
-                                    self.cur.path.push(children.len() - 1);
-                                    t = children.last().unwrap();
-                                }
-                                VisTree::Leaf { layout } => {
-                                    self.cur.pos = TextPos {
-                                        line: self.cur.path.pop().unwrap(),
-                                        pos: layout.text.len(),
-                                    };
-                                    break;
-                                }
-                            }
-                        }
+                        let child_block = child_block.make_ref();
+                        drop(b);
+                        let (block, line) = last_leaf(child_block);
+                        self.cur.pos = block.borrow().max_pos(line);
+                        self.cur.line = line;
+                        self.cur.block = block;
                     }
-                    _ => panic!("{:?}", self.cur),
+                    _ => panic!(),
                 }
             }
         }
@@ -217,26 +230,30 @@ impl App {
 
     fn left(&mut self) {
         self.sink_cursor();
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            match &f[idx] {
-                VisTree::Leaf { .. } => panic!(),
-                VisTree::Node { children } => f = children,
-            }
-        }
-        match &f[self.cur.pos.line] {
-            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
-            VisTree::Leaf { layout } => {
-                if let Some(pos) = prev_char_pos(&layout.text, self.cur.pos.pos) {
-                    self.cur.pos.pos = pos;
+        let b = self.cur.block.borrow();
+        match b.children[self.cur.line] {
+            BlockChild::Block(_) => panic!(),
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
+                let node = node.borrow();
+                let text = &node.lines[line_idx].line.text();
+                if let Some(pos) = prev_char_pos(text, self.cur.pos) {
+                    self.cur.pos = pos;
                     return;
                 }
-                if let Some(prev_leaf) = prev_leaf(
-                    &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line) {
-                    self.cur.pos.pos = match prev_leaf {
-                        VisTree::Leaf { layout } => layout.text.len(),
-                        VisTree::Node { .. } => panic!(),
-                    };
+                drop(b);
+                let leaf = (Refed::clone(&self.cur.block), self.cur.line);
+                if let Some((prev_block, prev_line)) = prev_leaf(leaf) {
+                    let b = prev_block.borrow();
+                    let (node, line_idx) = b.node_line_idx(prev_line).unwrap();
+                    let node = node.borrow();
+                    let text = &node.lines[line_idx].line.text();
+                    
+                    self.cur.pos = text.len();
+                    self.cur.line = prev_line;
+
+                    drop(b);
+                    self.cur.block = prev_block;
                 }
             }
         }
@@ -244,23 +261,23 @@ impl App {
 
     fn right(&mut self) {
         self.sink_cursor();
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            match &f[idx] {
-                VisTree::Leaf { .. } => panic!(),
-                VisTree::Node { children } => f = children,
-            }
-        }
-        match &f[self.cur.pos.line] {
-            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
-            VisTree::Leaf { layout } => {
-                if let Some(pos) = next_char_pos(&layout.text, self.cur.pos.pos) {
-                    self.cur.pos.pos = pos;
+        let b = self.cur.block.borrow();
+        match b.children[self.cur.line] {
+            BlockChild::Block(_) => panic!(),
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
+                let node = node.borrow();
+                let text = &node.lines[line_idx].line.text();
+                if let Some(pos) = next_char_pos(text, self.cur.pos) {
+                    self.cur.pos = pos;
                     return;
                 }
-                if let Some(_next_leaf) = next_leaf(
-                    &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line) {
-                    self.cur.pos.pos = 0;
+                drop(b);
+                let leaf = (Refed::clone(&self.cur.block), self.cur.line);
+                if let Some((next_block, next_line)) = next_leaf(leaf) {
+                    self.cur.line = next_line;
+                    self.cur.pos = 0;
+                    self.cur.block = next_block;
                 }
             }
         }
@@ -268,72 +285,74 @@ impl App {
 
     fn up(&mut self) {
         self.sink_cursor();
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            match &f[idx] {
-                VisTree::Leaf { .. } => panic!(),
-                VisTree::Node { children } => f = children,
-            }
-        }
-        match &f[self.cur.pos.line] {
-            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
-            leaf @ VisTree::Leaf { layout } => {
-                let eps = 3.0;
-                let cc = leaf.cursor_coord(self.cur.pos.pos);
-                if cc.top - eps > 0.0 {
-                    let x = self.cur.anchor_x
-                        - (X_OFFSET + INDENT * self.cur.path.len() as f32);
-                    self.cur.pos.pos = layout.coords_to_pos(x, cc.top - eps);
-                } else {
-                    let prev_leaf = prev_leaf(
-                        &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line);
-                    if let Some(prev_leaf) = prev_leaf {
-                        let x = self.cur.anchor_x
-                            - (X_OFFSET + INDENT * self.cur.path.len() as f32);
-                        let y = prev_leaf.size().1 - eps;
-                        match prev_leaf {
-                            VisTree::Node { .. } => panic!(),
-                            VisTree::Leaf { layout } =>
-                                self.cur.pos.pos = layout.coords_to_pos(x, y),
-                        }
-                    }
-                }
+        let b = self.cur.block.borrow();
+        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
+        let mut node = node.borrow_mut();
+        let layout = node.line_layout(line_idx, &self.ctx);
+
+        let eps = 3.0;
+        let cc = layout.cursor_coord(self.cur.pos);
+        if cc.top - eps > 0.0 {
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+            self.cur.pos = layout.coords_to_pos(x, cc.top - eps);
+        } else {
+            let prev_leaf = prev_leaf((Refed::clone(&self.cur.block), self.cur.line));
+            if let Some((prev_block, prev_idx)) = prev_leaf {
+                drop(node);
+                drop(b);
+                let b = prev_block.borrow();
+
+                let y = b.size(&self.ctx).1 - eps;
+
+                let (node, line_idx) = b.node_line_idx(prev_idx).unwrap();
+                let mut node = node.borrow_mut();
+                let layout = node.line_layout(line_idx, &self.ctx);
+
+                let x = self.cur.anchor_x
+                    - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+
+                self.cur.line = prev_idx;
+                self.cur.pos = layout.coords_to_pos(x, y);
+                drop(b);
+                self.cur.block = prev_block;
             }
         }
     }
 
     fn down(&mut self) {
         self.sink_cursor();
-        let mut f = &self.vis_forest;
-        for &idx in &self.cur.path {
-            match &f[idx] {
-                VisTree::Leaf { .. } => panic!(),
-                VisTree::Node { children } => f = children,
-            }
-        }
-        match &f[self.cur.pos.line] {
-            VisTree::Node { .. } => panic!("should have been handled by sink_cursor()"),
-            leaf @ VisTree::Leaf { layout } => {
-                let eps = 3.0;
-                let cc = leaf.cursor_coord(self.cur.pos.pos);
-                if cc.top + cc.height + eps < leaf.size().1 {
-                    let x = self.cur.anchor_x
-                        - (X_OFFSET + INDENT * self.cur.path.len() as f32);
-                    self.cur.pos.pos = layout.coords_to_pos(x, cc.top + cc.height + eps);
-                } else {
-                    let next_leaf = next_leaf(
-                        &self.vis_forest, &mut self.cur.path, &mut self.cur.pos.line);
-                    if let Some(next_leaf) = next_leaf {
-                        let x = self.cur.anchor_x
-                            - (X_OFFSET + INDENT * self.cur.path.len() as f32);
-                        let y = eps;
-                        match next_leaf {
-                            VisTree::Node { .. } => panic!(),
-                            VisTree::Leaf { layout } =>
-                                self.cur.pos.pos = layout.coords_to_pos(x, y),
-                        }
-                    }
-                }
+        let b = self.cur.block.borrow();
+        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
+        let mut node = node.borrow_mut();
+        let layout = node.line_layout(line_idx, &self.ctx);
+
+        let eps = 3.0;
+        let cc = layout.cursor_coord(self.cur.pos);
+        if cc.top + cc.height + eps < layout.height {
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+            self.cur.pos = layout.coords_to_pos(x, cc.top + cc.height + eps);
+        } else {
+            let next_leaf = next_leaf((Refed::clone(&self.cur.block), self.cur.line));
+            if let Some((next_block, next_idx)) = next_leaf {
+                drop(node);
+                drop(b);
+                let b = next_block.borrow();
+
+                let y = eps;
+
+                let (node, line_idx) = b.node_line_idx(next_idx).unwrap();
+                let mut node = node.borrow_mut();
+                let layout = node.line_layout(line_idx, &self.ctx);
+
+                let x = self.cur.anchor_x
+                    - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+
+                self.cur.line = next_idx;
+                self.cur.pos = layout.coords_to_pos(x, y);
+                drop(b);
+                self.cur.block = next_block;
             }
         }
     }
@@ -341,129 +360,76 @@ impl App {
     fn put_char(&mut self, c: char) {
         assert!(self.cur.sel.is_none(), "TODO");
 
-        let (key, line) = locate_line(
-            self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
-            &self.notes);
-        let text = match &mut self.notes.get_mut(&key).unwrap()[line] {
-            Line::Text { text, .. } => text,
-            Line::Node { local_header, .. } => local_header,
-        };
+        let (node, line_idx) = self.cur.block.borrow().node_line_idx(self.cur.line).unwrap();
+        let mut node = node.borrow_mut();
+        let line = &mut node.lines[line_idx];
+        let text = line.line.text_mut();
 
-        text.insert(self.cur.pos.pos, c);
-        self.cur.pos.pos += c.len_utf8();
+        text.insert(self.cur.pos, c);
+        self.cur.pos += c.len_utf8();
+
+        line.layout = None;
     }
 
     fn enter(&mut self) {
         assert!(self.cur.sel.is_none(), "TODO");
-        let (key, line) = locate_line(
-            self.cur.path.iter().copied().chain(std::iter::once(self.cur.pos.line)),
-            &self.notes);
 
-        let note = self.notes.get_mut(&key).unwrap();
-        match note[line] {
-            Line::Text { ref mut text, monospace } => {
-                let tail = text[self.cur.pos.pos..].to_owned();
-                text.truncate(self.cur.pos.pos);
-                note.insert(line + 1, Line::Text {
-                    text: tail,
-                    monospace,
-                });
-                self.cur.pos.line += 1;
-                self.cur.pos.pos = 0;
-            }
-            Line::Node { ref mut local_header, key } => {
-                let tail = local_header[self.cur.pos.pos..].to_owned();
-                local_header.truncate(self.cur.pos.pos);
-                self.notes.get_mut(&Some(key)).unwrap().insert(0, Line::Text {
-                    text: tail,
-                    monospace: false,
-                });
-                self.cur.pos.line += 1;
-                self.cur.pos.pos = 0;
-                // TODO: make sure this tree is expanded
-            }
-        };
-    }
-}
+        let mut b = self.cur.block.borrow_mut();
+        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
+        let mut node = node.borrow_mut();
+        let line = &mut node.lines[line_idx];
+        let text = line.line.text_mut();
 
-// returns (text key, line number)
-fn locate_line(
-    mut path: impl Iterator<Item=usize>,
-    notes: &Notes,
-) -> (Option<NodeKey>, usize) {
-    let mut key = None;
-    let mut idx = path.next().unwrap();
-    loop {
-        match path.next() {
-            None => break (key, idx),
-            Some(idx2) => {
-                match notes[&key][idx] {
-                    Line::Text { .. } => panic!(),
-                    Line::Node { key: k, .. } => {
-                        if idx2 == 0 {
-                            assert!(path.next().is_none());
-                            break (key, idx);
-                        } else {
-                            idx = idx2 - 1;
-                            key = Some(k);
-                        }
+        let tail = text[self.cur.pos..].to_owned();
+        text.truncate(self.cur.pos);
+        line.layout = None;
+
+        if self.cur.line == 0 {
+            drop(node);
+
+            b.node.borrow_mut().lines.insert(0, LineWithLayout {
+                line: Line::Text { text: tail, monospace: false },
+                layout: None,
+            });
+
+            assert!(b.expanded, "TODO");
+            b.children.insert(1, BlockChild::Leaf);
+
+            // update parent idx for all children
+            for child in &mut b.children[1..] {
+                match child {
+                    BlockChild::Leaf => {},
+                    BlockChild::Block(b) => {
+                        b.borrow_mut().parent_idx.as_mut().unwrap().1 += 1;
                     }
                 }
             }
-        }
-    }
-}
+            self.cur.line += 1;
+            self.cur.pos = 0;
+        } else {
+            let monospace = match line.line {
+                Line::Text { monospace, .. } => monospace,
+                Line::Node { .. } => panic!(),
+            };
 
-fn compute_vis_forest(
-    ctx: &AppCtx,
-    key: Option<NodeKey>,
-    notes: &Notes,
-    forest: &mut Vec<VisTree>,
-) {
-    let text = &notes[&key];
-    for line in text {
-        match line {
-            Line::Text { text, monospace } => {
-                let layout = TextLayout::new(
-                    &ctx.dwrite_factory,
-                    if *monospace {
-                        &ctx.code_text_format
-                    } else {
-                        &ctx.normal_text_format
-                    },
-                    text, 500.0);
-                forest.push(VisTree::Leaf { layout });
-            }
-            Line::Node { local_header, key } => {
-                let layout = TextLayout::new(
-                    &ctx.dwrite_factory,
-                    &ctx.normal_text_format,
-                    local_header, 500.0);
-                let mut children = vec![VisTree::Leaf { layout }];
-                compute_vis_forest(ctx, Some(*key), notes, &mut children);
-                forest.push(VisTree::Node { children });
-            }
-        }
-    }
-}
+            node.lines.insert(line_idx + 1, LineWithLayout {
+                line: Line::Text { text: tail, monospace },
+                layout: None,
+            });
 
-struct MouseClickVisitor {
-    x: f32,
-    y: f32,
-    result: Option<(Vec<usize>, TextPos)>,
-}
+            self.cur.line += 1;
+            self.cur.pos = 0;
+            b.children.insert(self.cur.line, BlockChild::Leaf);
 
-impl VisTreeVisitor for MouseClickVisitor {
-    fn visit(&mut self, path: &[usize], tree: &VisTree, x: f32, y: f32) {
-        match tree {
-            VisTree::Leaf { layout } => {
-                if y <= self.y && self.y <= y + layout.height {
-                    let pos = layout.coords_to_pos(self.x - x, self.y - y);
-                    let (&line, path) = path.split_last().unwrap();
-                    self.result = Some((path.to_owned(), TextPos { line, pos }));
+            // update parent idx for all children
+            for child in &mut b.children[self.cur.line + 1..] {
+                match child {
+                    BlockChild::Leaf => {},
+                    BlockChild::Block(b) => {
+                        b.borrow_mut().parent_idx.as_mut().unwrap().1 += 1;
+                    }
                 }
             }
-            VisTree::Node { .. } => {}
         }
     }
 }
@@ -474,12 +440,12 @@ fn paint(app: &mut App) {
         rt.BeginDraw();
         rt.Clear(&D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.2, a: 1.0 });
 
-        let mut v = DrawVisitor {
+        let mut v = gfx::DrawVisitor {
             ctx: &app.ctx,
             cur: &app.cur,
         };
         let mut y = app.y_offset;
-        VisTree::forest_accept(&app.vis_forest, &mut v, &mut vec![], X_OFFSET, &mut y);
+        gfx::accept_block(&app.root_block, &mut v, &mut y, &app.ctx);
 
         let hr = rt.EndDraw(null_mut(), null_mut());
         assert!(hr != D2DERR_RECREATE_TARGET, "TODO");
@@ -495,9 +461,12 @@ impl WindowProcState for App {
     )-> Option<LRESULT> {
         if msg == WM_DESTROY {
             eprintln!("{}", win_msg_name(msg));
-            unsafe {
-                PostQuitMessage(0);
-            }
+            // TODO: all Refed<> in app state should be cleaned up,
+            // otherwise Owned<> destructors will report dangling refs.
+            std::process::exit(0);
+            // unsafe {
+            //     PostQuitMessage(0);
+            // }
         }
         if msg == WM_SIZE {
             println!("{}", win_msg_name(msg));
@@ -525,20 +494,22 @@ impl WindowProcState for App {
             let x = GET_X_LPARAM(lparam);
             let y = GET_Y_LPARAM(lparam);
             println!("{} {} {}", win_msg_name(msg), x, y);
-            let mut v = MouseClickVisitor {
+            let mut app = sr.state_mut();
+            let mut v = gfx::MouseClickVisitor {
                 x: x as f32,
                 y: y as f32,
+                ctx: &app.ctx,
                 result: None,
             };
-            let mut app = sr.state_mut();
             let mut yy = app.y_offset;
-            VisTree::forest_accept(&app.vis_forest, &mut v, &mut vec![], X_OFFSET, &mut yy);
-            if let Some((path, pos)) = v.result {
-                app.cur = Cursor {
-                    path,
+            gfx::accept_block(&app.root_block, &mut v, &mut yy, &app.ctx);
+            if let Some((block, line, pos)) = v.result {
+                app.cur = Cur {
+                    block,
+                    line,
                     pos,
-                    sel: None,
                     anchor_x: 0.0,
+                    sel: None,
                 };
                 app.update_anchor();
                 invalidate_rect(hwnd);
@@ -570,12 +541,10 @@ impl WindowProcState for App {
             let mut app = sr.state_mut();
             if wparam >= 32 {
                 app.put_char(c);
-                app.update_vis_forest();
                 app.update_anchor();
             }
             if c == '\r' {
                 app.enter();
-                app.update_vis_forest();
                 app.update_anchor();
             }
             invalidate_rect(hwnd);
