@@ -29,6 +29,10 @@ use crate::types::*;
 use crate::owned_ref::{Owned, Refed};
 
 struct AppCtx {
+    arrow_cursor: HCURSOR,
+    hand_cursor: HCURSOR,
+    beam_cursor: HCURSOR,
+
     render_target: ComPtr<ID2D1HwndRenderTarget>,
     dwrite_factory: ComPtr<IDWriteFactory>,
     header_text_format: ComPtr<IDWriteTextFormat>,
@@ -41,6 +45,10 @@ struct AppCtx {
 
 impl AppCtx {
     fn new(hwnd: HWND) -> Self {
+        let arrow_cursor = load_cursor(IDC_ARROW);
+        let hand_cursor = load_cursor(IDC_HAND);
+        let beam_cursor = load_cursor(IDC_IBEAM);
+
         let d2d_factory = create_d2d_factory();
         let render_target = create_hwnd_render_target(&d2d_factory, hwnd);
         let dwrite_factory = create_dwrite_factory();
@@ -53,7 +61,12 @@ impl AppCtx {
             &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
         let sel_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.3, g: 0.3, b: 0.4, a: 1.0 });
+
         AppCtx {
+            arrow_cursor,
+            hand_cursor,
+            beam_cursor,
+
             render_target,
             dwrite_factory,
             header_text_format,
@@ -111,6 +124,30 @@ fn expand_block(block: &Refed<Block>) {
     }
 }
 
+fn destroy_block(block: Owned<Block>) {
+    let r = block.make_ref();
+    let node = Rc::clone(&block.borrow().node);
+    let mut node = node.borrow_mut();
+    let mut cnt = 0;
+    node.blocks.retain(|bb| {
+        if bb.ptr_eq(&r) {
+            cnt += 1;
+            false
+        } else {
+            true
+        }
+    });
+    assert_eq!(cnt, 1);
+    drop(node);
+
+    for child in r.borrow_mut().children.drain(..) {
+        match child {
+            BlockChild::Leaf => {}
+            BlockChild::Block(b) => destroy_block(b),
+        }
+    }
+}
+
 fn text_line(text: &str, monospace: bool) -> LineWithLayout {
     LineWithLayout {
         line: Line::Text {
@@ -134,9 +171,19 @@ impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
 
+
+        let node2 = Rc::new(RefCell::new(Node {
+            lines: vec![
+                text_line("ccc", false),
+            ],
+            blocks: vec![],
+        }));
+
         let node1 = Rc::new(RefCell::new(Node {
             lines: vec![
                 text_line("aaaa", false),
+                node_line("node2", &node2),
+                text_line("bbb", false),
             ],
             blocks: vec![],
         }));
@@ -198,6 +245,51 @@ impl App {
     fn update_anchor(&mut self) {
         self.cur.anchor_x = self.cur.block.borrow().abs_cur_x(
             self.cur.line, self.cur.pos, &self.ctx);
+    }
+
+    fn collapse_block(&mut self, block: &Refed<Block>) {
+        assert!(block.borrow().expanded);
+        if block.borrow().depth <= self.cur.block.borrow().depth {
+            let mut b = self.cur.block.clone();
+            while block.borrow().depth < b.borrow().depth {
+                let p = b.borrow().parent_idx.as_ref().unwrap().0.clone();
+                b = p;
+            }
+            if block.ptr_eq(&b) {
+                let first_line_len = block.borrow().max_pos(0);
+                if block.borrow().depth < self.cur.block.borrow().depth {
+                    self.cur.block = Refed::clone(block);
+                    self.cur.line = 0;
+                    self.cur.pos = first_line_len;
+                    self.cur.sel = None;
+                } else {
+                    assert!(self.cur.block.ptr_eq(block));
+                    if let Some(sel) = self.cur.sel.as_mut() {
+                        if sel.line > 0 {
+                            sel.line = 0;
+                            sel.pos = first_line_len;
+                        }
+                    }
+                    if self.cur.line > 0 {
+                        self.cur.line = 0;
+                        self.cur.pos = first_line_len;
+                    }
+                    if let Some(sel) = self.cur.sel.as_ref() {
+                        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                            self.cur.sel = None;
+                        }
+                    }
+                }
+            }
+        }
+        let mut b = block.borrow_mut();
+        b.expanded = false;
+        for child in b.children.drain(1..) {
+            match child {
+                BlockChild::Leaf => {}
+                BlockChild::Block(bc) => destroy_block(bc),
+            }
+        }
     }
 
     // If the cursor is on a VisTree::Node boundary and not on a line of text
@@ -493,6 +585,28 @@ impl WindowProcState for App {
             sr.state_mut().scroll(delta);
             invalidate_rect(hwnd);
         }
+        if msg == WM_MOUSEMOVE {
+            let x = GET_X_LPARAM(lparam);
+            let y = GET_Y_LPARAM(lparam);
+            // println!("{} {} {}", win_msg_name(msg), x, y);
+            let app = sr.state_mut();
+            let mut v = gfx::MouseClickVisitor {
+                x: x as f32,
+                y: y as f32,
+                ctx: &app.ctx,
+                result: gfx::MouseResult::Nothing,
+            };
+            let mut yy = app.y_offset;
+            gfx::accept_block(&app.root_block, &mut v, &mut yy, &app.ctx);
+            let cur = match v.result {
+                gfx::MouseResult::Nothing => app.ctx.arrow_cursor,
+                gfx::MouseResult::Cur { .. } => app.ctx.beam_cursor,
+                gfx::MouseResult::Toggle { .. } => app.ctx.hand_cursor,
+            };
+            unsafe {
+                SetCursor(cur);
+            }
+        }
         if msg == WM_LBUTTONDOWN {
             let x = GET_X_LPARAM(lparam);
             let y = GET_Y_LPARAM(lparam);
@@ -502,20 +616,34 @@ impl WindowProcState for App {
                 x: x as f32,
                 y: y as f32,
                 ctx: &app.ctx,
-                result: None,
+                result: gfx::MouseResult::Nothing,
             };
             let mut yy = app.y_offset;
             gfx::accept_block(&app.root_block, &mut v, &mut yy, &app.ctx);
-            if let Some((block, line, pos)) = v.result {
-                app.cur = Cur {
-                    block,
-                    line,
-                    pos,
-                    anchor_x: 0.0,
-                    sel: None,
-                };
-                app.update_anchor();
-                invalidate_rect(hwnd);
+            match v.result {
+                gfx::MouseResult::Nothing => {}
+                gfx::MouseResult::Cur { block, line, pos } => {
+                    app.cur = Cur {
+                        block,
+                        line,
+                        pos,
+                        anchor_x: 0.0,
+                        sel: None,
+                    };
+                    app.update_anchor();
+                    invalidate_rect(hwnd);
+                }
+                gfx::MouseResult::Toggle { block } => {
+                    if block.borrow().expanded {
+                        app.collapse_block(&block);
+                        app.update_anchor();
+                        invalidate_rect(hwnd);
+                    } else {
+                        expand_block(&block);
+                        app.update_anchor();
+                        invalidate_rect(hwnd);
+                    }
+                }
             }
         }
         if msg == WM_KEYDOWN {
@@ -558,10 +686,8 @@ impl WindowProcState for App {
 
 fn main() {
     let app = LazyState::new(App::new);
-    let arrow_cursor = load_cursor(IDC_IBEAM);
     unsafe {
         let win_class = win_win::WindowClass::builder("e2 class")
-            .cursor(arrow_cursor)
             .build().unwrap();
         let hwnd = win_win::WindowBuilder::new(app, &win_class)
             .name("e2")

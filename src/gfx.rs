@@ -142,6 +142,10 @@ fn draw_cursor(
 
 pub const X_OFFSET: f32 = 10.0;
 pub const INDENT: f32 = 20.0;
+const BULLET_OFFSET_X: f32 = 7.5;
+const BULLET_OFFSET_Y: f32 = 7.5;
+const BULLET_SIZE: f32 = 5.0;
+const BULLET_MOUSE_RADIUS: f32 = 7.0;
 
 pub struct DrawVisitor<'a> {
     pub(crate) ctx: &'a AppCtx,
@@ -227,16 +231,13 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     }
                 }
 
-                let bullet_offset_x = 7.5;
-                let bullet_offset_y = 7.5;
-                let bullet_size = 5.0;
-                let xx = (x + bullet_offset_x).floor() + 0.5;
-                let yy = (y + bullet_offset_y).floor() + 0.5;
+                let xx = (x + BULLET_OFFSET_X).floor() + 0.5;
+                let yy = (y + BULLET_OFFSET_Y).floor() + 0.5;
                 let rect = D2D1_RECT_F {
                     left: xx,
                     top: yy,
-                    right: xx + bullet_size,
-                    bottom: yy + bullet_size,
+                    right: xx + BULLET_SIZE,
+                    bottom: yy + BULLET_SIZE,
                 };
                 unsafe {
                     self.ctx.render_target.DrawRectangle(
@@ -284,11 +285,23 @@ impl Block {
     }
 }
 
+pub enum MouseResult {
+    Nothing,
+    Cur {
+        block: Refed<Block>,
+        line: usize,
+        pos: usize,
+    },
+    Toggle {
+        block: Refed<Block>,
+    }
+}
+
 pub(crate) struct MouseClickVisitor<'a> {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) ctx: &'a AppCtx,
-    pub(crate) result: Option<(Refed<Block>, usize, usize)>,
+    pub(crate) result: MouseResult,
 }
 
 impl<'a> BlockVisitor for MouseClickVisitor<'a> {
@@ -302,11 +315,19 @@ impl<'a> BlockVisitor for MouseClickVisitor<'a> {
                     if y <= self.y && self.y <= y + layout.height {
                         let pos = layout.coords_to_pos(self.x - x, self.y - y);
                         drop(b);
-                        self.result = Some((block, idx, pos));
+                        if let MouseResult::Nothing = self.result {
+                            self.result = MouseResult::Cur { block, line: idx, pos };
+                        }
                     }                    
                 }
             }
-            BlockChild::Block { .. } => {}
+            BlockChild::Block(ref b) => {
+                let dx = x + BULLET_OFFSET_X + 0.5 * BULLET_SIZE - self.x;
+                let dy = y + BULLET_OFFSET_Y + 0.5 * BULLET_SIZE - self.y;
+                if dx * dx + dy * dy <= BULLET_MOUSE_RADIUS * BULLET_MOUSE_RADIUS {
+                    self.result = MouseResult::Toggle { block: b.make_ref() };
+                }
+            }
         }
     }
 }
