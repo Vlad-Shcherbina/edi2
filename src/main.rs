@@ -138,8 +138,8 @@ fn destroy_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
     });
     assert_eq!(cnt, 1);
 
-    let children = std::mem::replace(&mut blocks[block].children, vec![]);
-    for child in children {
+    let block = blocks.remove(block);
+    for child in block.children {
         match child {
             BlockChild::Leaf => {}
             BlockChild::Block(b) => destroy_block(b, blocks, nodes),
@@ -231,6 +231,25 @@ impl App {
         };
         app.update_anchor();
         app
+    }
+
+    fn check(&self) {
+        fn rec_check_block(
+            block: BlockKey, cnt: &mut usize,
+            blocks: &Blocks, nodes: &Nodes,
+        ) {
+            *cnt += 1;
+            check_block(block, blocks, nodes);
+            for child in &blocks[block].children {
+                match *child {
+                    BlockChild::Leaf => {}
+                    BlockChild::Block(b) => rec_check_block(b, cnt, blocks, nodes),
+                }
+            }
+        }
+        let mut cnt = 0;
+        rec_check_block(self.root_block, &mut cnt, &self.blocks, &self.nodes);
+        assert_eq!(self.blocks.len(), cnt);
     }
 
     fn scroll(&mut self, delta: f32) {
@@ -557,6 +576,7 @@ impl App {
 }
 
 fn paint(app: &mut App) {
+    app.check();
     let rt = &app.ctx.render_target;
     unsafe {
         rt.BeginDraw();

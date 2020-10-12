@@ -41,6 +41,41 @@ pub enum BlockChild {
     Leaf,
 }
 
+pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
+    let b = &blocks[block];
+    match b.parent_idx {
+        Some((parent, idx)) => {
+            assert_eq!(blocks[parent].depth + 1, blocks[block].depth);
+            match blocks[parent].children[idx] {
+                BlockChild::Leaf => panic!(),
+                BlockChild::Block(b) => assert_eq!(b, block),
+            }
+        }
+        None => assert_eq!(b.depth, 0),
+    }
+
+    let cnt = nodes[b.node].blocks.iter().filter(|&&bb| bb == block).count();
+    assert_eq!(cnt, 1);
+
+    match b.children[0] {
+        BlockChild::Leaf => {}
+        _ => panic!(),
+    }    
+    if b.expanded {
+        assert_eq!(b.children.len(), 1 + nodes[b.node].lines.len());
+        for (child, line) in b.children[1..].iter().zip(&nodes[b.node].lines) {
+            match (child, &line.line) {
+                (BlockChild::Leaf, Line::Text {..}) => {}
+                (&BlockChild::Block(b), &Line::Node { node, .. }) =>
+                    assert_eq!(blocks[b].node, node),
+                _ => panic!(),
+            }
+        }
+    } else {
+        assert_eq!(b.children.len(), 1);
+    }
+}
+
 type BlockChildRef = (BlockKey, usize);
 
 impl Line {
