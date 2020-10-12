@@ -576,6 +576,21 @@ impl App {
             }
         }
     }
+
+    fn tab(&mut self) {
+        if self.cur.sel.is_some() {
+            return;  // TODO?
+        }
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+        if self.cur.line == 0 {
+            if blocks[self.cur.block].expanded {
+                self.collapse_block(self.cur.block);
+            } else {
+                expand_block(self.cur.block, blocks, nodes);
+            }
+        }
+    }
 }
 
 fn paint(app: &mut App) {
@@ -735,6 +750,10 @@ impl WindowProcState for App {
             }
             if c == '\r' {
                 app.enter();
+                app.update_anchor();
+            }
+            if c == '\t' {
+                app.tab();
                 app.update_anchor();
             }
             invalidate_rect(hwnd);
