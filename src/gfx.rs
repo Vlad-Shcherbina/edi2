@@ -7,11 +7,11 @@ use crate::types::*;
 use crate::owned_ref::{Owned, Refed};
 
 impl Node {
-    pub(crate) fn line_layout(&mut self, idx: usize, ctx: &AppCtx) -> &TextLayout {
-        let line = &mut self.lines[idx];
-        let layout = &mut line.layout;
+    pub(crate) fn line_layout(&self, idx: usize, ctx: &AppCtx) -> &TextLayout {
+        let line = &self.lines[idx];
+        let layout = &line.layout;
         let line = &line.line;
-        layout.get_or_insert_with(|| {
+        layout.get_or_init(|| {
             match line {
                 Line::Text { text, monospace } =>
                     TextLayout::new(
@@ -61,7 +61,7 @@ impl Block {
         match self.children.last().unwrap() {
             BlockChild::Leaf => {
                 let (node, line_idx) = self.node_line_idx(self.children.len() - 1).unwrap();
-                let mut node = node.borrow_mut();
+                let node = node.borrow();
                 let layout = node.line_layout(line_idx, ctx);
                 layout.cursor_coord(layout.text.len()).height
             }
@@ -73,7 +73,7 @@ impl Block {
         match self.children[idx] {
             BlockChild::Leaf => {
                 if let Some((node, line_idx)) = self.node_line_idx(idx) {
-                    let mut node = node.borrow_mut();
+                    let node = node.borrow();
                     let layout = node.line_layout(line_idx, ctx);
                     layout_size(layout)
                 } else {
@@ -187,7 +187,7 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
         match b.children[idx] {
             BlockChild::Leaf => {
                 if let Some((node, line_idx)) = b.node_line_idx(idx) {
-                    let mut node = node.borrow_mut();
+                    let node = node.borrow();
                     let layout = node.line_layout(line_idx, self.ctx);
 
                     if let Some((sel_start_pos, sel_end_pos, include_newline)) = sel {
@@ -261,7 +261,7 @@ impl Block {
         match self.children[idx] {
             BlockChild::Leaf => {
                 let (node, line_idx) = self.node_line_idx(idx).unwrap();
-                let mut node = node.borrow_mut();
+                let node = node.borrow();
                 let layout = node.line_layout(line_idx, ctx);
                 layout.cursor_coord(pos)
             }
@@ -314,7 +314,7 @@ impl<'a> BlockVisitor for MouseClickVisitor<'a> {
         match b.children[idx] {
             BlockChild::Leaf => {
                 if let Some((node, line_idx)) = b.node_line_idx(idx) {
-                    let mut node = node.borrow_mut();
+                    let node = node.borrow();
                     let layout = node.line_layout(line_idx, self.ctx);
                     if y <= self.y && self.y <= y + layout.height {
                         let pos = layout.coords_to_pos(self.x - x, self.y - y);
@@ -322,7 +322,7 @@ impl<'a> BlockVisitor for MouseClickVisitor<'a> {
                         if let MouseResult::Nothing = self.result {
                             self.result = MouseResult::Cur { block, line: idx, pos };
                         }
-                    }                    
+                    }
                 }
             }
             BlockChild::Block(ref b) => {

@@ -12,6 +12,7 @@ pub mod types;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::ptr::null_mut;
+use once_cell::unsync::OnceCell;
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
 use winapi::shared::minwindef::*;
@@ -154,7 +155,7 @@ fn text_line(text: &str, monospace: bool) -> LineWithLayout {
             text: text.to_owned(),
             monospace,
         },
-        layout: None,
+        layout: OnceCell::new(),
     }
 }
 fn node_line(local_header: &str, node: &Rc<RefCell<Node>>) -> LineWithLayout {
@@ -163,7 +164,7 @@ fn node_line(local_header: &str, node: &Rc<RefCell<Node>>) -> LineWithLayout {
             local_header: local_header.to_owned(),
             node: Rc::clone(node),
         },
-        layout: None,
+        layout: OnceCell::new(),
     }
 }
 
@@ -382,7 +383,7 @@ impl App {
         self.sink_cursor();
         let b = self.cur.block.borrow();
         let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-        let mut node = node.borrow_mut();
+        let node = node.borrow();
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
@@ -401,7 +402,7 @@ impl App {
                 let y = b.size(&self.ctx).1 - eps;
 
                 let (node, line_idx) = b.node_line_idx(prev_idx).unwrap();
-                let mut node = node.borrow_mut();
+                let node = node.borrow();
                 let layout = node.line_layout(line_idx, &self.ctx);
 
                 let x = self.cur.anchor_x
@@ -419,7 +420,7 @@ impl App {
         self.sink_cursor();
         let b = self.cur.block.borrow();
         let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-        let mut node = node.borrow_mut();
+        let node = node.borrow();
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
@@ -438,7 +439,7 @@ impl App {
                 let y = eps;
 
                 let (node, line_idx) = b.node_line_idx(next_idx).unwrap();
-                let mut node = node.borrow_mut();
+                let node = node.borrow();
                 let layout = node.line_layout(line_idx, &self.ctx);
 
                 let x = self.cur.anchor_x
@@ -463,7 +464,7 @@ impl App {
         text.insert(self.cur.pos, c);
         self.cur.pos += c.len_utf8();
 
-        line.layout = None;
+        line.layout = OnceCell::new();
     }
 
     fn enter(&mut self) {
@@ -477,14 +478,14 @@ impl App {
 
         let tail = text[self.cur.pos..].to_owned();
         text.truncate(self.cur.pos);
-        line.layout = None;
+        line.layout = OnceCell::new();
 
         if self.cur.line == 0 {
             drop(node);
 
             b.node.borrow_mut().lines.insert(0, LineWithLayout {
                 line: Line::Text { text: tail, monospace: false },
-                layout: None,
+                layout: OnceCell::new(),
             });
 
             assert!(b.expanded, "TODO");
@@ -509,7 +510,7 @@ impl App {
 
             node.lines.insert(line_idx + 1, LineWithLayout {
                 line: Line::Text { text: tail, monospace },
-                layout: None,
+                layout: OnceCell::new(),
             });
 
             self.cur.line += 1;

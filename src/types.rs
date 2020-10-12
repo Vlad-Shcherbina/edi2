@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::cell::RefCell;
+use once_cell::unsync::OnceCell;
 use crate::owned_ref::{Owned, Refed};
 use crate::text_layout::TextLayout;
 
@@ -16,7 +17,7 @@ pub enum Line {
 
 pub struct LineWithLayout {
     pub line: Line,
-    pub layout: Option<TextLayout>,
+    pub layout: OnceCell<TextLayout>,
 }
 
 pub struct Node {
