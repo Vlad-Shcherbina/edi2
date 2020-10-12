@@ -240,6 +240,10 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     bottom: yy + BULLET_SIZE,
                 };
                 unsafe {
+                    if !b.borrow().expanded {
+                        self.ctx.render_target.FillRectangle(
+                            &rect, self.ctx.text_brush.as_raw());
+                    }
                     self.ctx.render_target.DrawRectangle(
                         &rect, self.ctx.text_brush.as_raw(), 1.0, null_mut());
                 }
