@@ -1,16 +1,15 @@
 #![feature(bindings_after_at)]
+#![feature(untagged_unions)]
 #![allow(clippy::many_single_char_names)]
 
+#[macro_use] pub mod slotmap;
 mod win_util;
 pub mod win_win_reent;
 mod text_layout;
 pub mod gfx;
 mod util;
-pub mod owned_ref;
 pub mod types;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::ptr::null_mut;
 use once_cell::unsync::OnceCell;
 use wio::com::ComPtr;
@@ -27,7 +26,6 @@ use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::util::*;
 use crate::types::*;
-use crate::owned_ref::{Owned, Refed};
 
 struct AppCtx {
     arrow_cursor: HCURSOR,
@@ -81,7 +79,7 @@ impl AppCtx {
 }
 
 pub struct Cur {
-    pub block: Refed<Block>,
+    pub block: BlockKey,
     pub line: usize,
     pub pos: usize,
     pub anchor_x: f32,
@@ -96,42 +94,42 @@ pub struct Sel {
 struct App {
     ctx: AppCtx,
 
+    nodes: Nodes,
+    blocks: Blocks,
+
     y_offset: f32,
-    root_block: Owned<Block>,
+    root_block: BlockKey,  // owned key
     cur: Cur,
 }
 
-fn expand_block(block: &Refed<Block>) {
-    let b = &mut *block.borrow_mut();
+fn expand_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
+    let b = &mut blocks[block];
     assert!(!b.expanded);
     b.expanded = true;
     assert_eq!(b.children.len(), 1);
-    let node = b.node.borrow();
-    for line in &node.lines {
-        match line.line {
-            Line::Text { .. } => b.children.push(BlockChild::Leaf),
-            Line::Node { node: ref child_node, .. } => {
-                let child_block = Owned::new(Block {
+    let node = b.node;
+    for i in 0..nodes[node].lines.len() {
+        match nodes[node].lines[i].line {
+            Line::Text { .. } => blocks[block].children.push(BlockChild::Leaf),
+            Line::Node { node: child_node, .. } => {
+                let child_block = blocks.insert(Block {
                     expanded: false,
-                    depth: b.depth + 1,
-                    parent_idx: Some((Refed::clone(block), b.children.len())),
-                    node: Rc::clone(child_node),
+                    depth: blocks[block].depth + 1,
+                    parent_idx: Some((block, blocks[block].children.len())),
+                    node: child_node,
                     children: vec![BlockChild::Leaf],
                 });
-                child_node.borrow_mut().blocks.push(child_block.make_ref());
-                b.children.push(BlockChild::Block(child_block));
+                nodes[child_node].blocks.push(child_block);
+                blocks[block].children.push(BlockChild::Block(child_block));
             }
         }
     }
 }
 
-fn destroy_block(block: Owned<Block>) {
-    let r = block.make_ref();
-    let node = Rc::clone(&block.borrow().node);
-    let mut node = node.borrow_mut();
+fn destroy_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
     let mut cnt = 0;
-    node.blocks.retain(|bb| {
-        if bb.ptr_eq(&r) {
+    nodes[blocks[block].node].blocks.retain(|&bb| {
+        if bb == block {
             cnt += 1;
             false
         } else {
@@ -139,12 +137,12 @@ fn destroy_block(block: Owned<Block>) {
         }
     });
     assert_eq!(cnt, 1);
-    drop(node);
 
-    for child in r.borrow_mut().children.drain(..) {
+    let children = std::mem::replace(&mut blocks[block].children, vec![]);
+    for child in children {
         match child {
             BlockChild::Leaf => {}
-            BlockChild::Block(b) => destroy_block(b),
+            BlockChild::Block(b) => destroy_block(b, blocks, nodes),
         }
     }
 }
@@ -158,11 +156,11 @@ fn text_line(text: &str, monospace: bool) -> LineWithLayout {
         layout: OnceCell::new(),
     }
 }
-fn node_line(local_header: &str, node: &Rc<RefCell<Node>>) -> LineWithLayout {
+fn node_line(local_header: &str, node: NodeKey) -> LineWithLayout {
     LineWithLayout {
         line: Line::Node {
             local_header: local_header.to_owned(),
-            node: Rc::clone(node),
+            node,
         },
         layout: OnceCell::new(),
     }
@@ -172,52 +170,54 @@ impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
 
+        let mut nodes = Nodes::new();
+        let mut blocks = Blocks::new();
 
-        let node2 = Rc::new(RefCell::new(Node {
+        let node2 = nodes.insert(Node {
             lines: vec![
                 text_line("ccc", false),
             ],
             blocks: vec![],
-        }));
+        });
 
-        let node1 = Rc::new(RefCell::new(Node {
+        let node1 = nodes.insert(Node {
             lines: vec![
                 text_line("aaaa", false),
-                node_line("node2", &node2),
+                node_line("node2", node2),
                 text_line("bbb", false),
             ],
             blocks: vec![],
-        }));
+        });
 
-        let root_node = Rc::new(RefCell::new(Node {
+        let root_node = nodes.insert(Node {
             lines: vec![
                 text_line("Stuff", false),
                 text_line("if name == '__main__':", true),
                 text_line("    print('hello')", true),
                 text_line("Stuff...", false),
-                node_line("zzz\nnode", &node1),
+                node_line("zzz\nnode", node1),
                 text_line("Stuff.", false),
             ],
             blocks: vec![],
-        }));
-        let root_block = Owned::new(Block {
+        });
+        let root_block = blocks.insert(Block {
             depth: 0,
             parent_idx: None,
-            node: Rc::clone(&root_node),
+            node: root_node,
             expanded: false,
             children: vec![BlockChild::Leaf],
         });
-        root_node.borrow_mut().blocks.push(root_block.make_ref());
+        nodes[root_node].blocks.push(root_block);
 
-        expand_block(&root_block.make_ref());
-        for block in &node1.borrow().blocks {
-            expand_block(block);
-        }
+        expand_block(root_block, &mut blocks, &mut nodes);
+        expand_block(nodes[node1].blocks[0], &mut blocks, &mut nodes);
 
         let mut app = App {
             ctx,
+            nodes,
+            blocks,
             cur: Cur {
-                block: root_block.make_ref(),
+                block: root_block,
                 line: 5,
                 pos: 1,
                 anchor_x: 0.0,
@@ -234,37 +234,46 @@ impl App {
     }
 
     fn scroll(&mut self, delta: f32) {
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
         // TODO: use actual line height
         self.y_offset += delta * 18.0;
         self.y_offset = self.y_offset.min(10.0);
-        let height = self.root_block.borrow().size(&self.ctx).1;
-        dbg!(self.root_block.borrow().last_line_height(&self.ctx));
-        let max_offset = 10.0 - height + self.root_block.borrow().last_line_height(&self.ctx);
+        let height = blocks[self.root_block].size(&self.ctx, blocks, nodes).1;
+        dbg!(blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes));
+        let max_offset = 10.0 - height
+            + blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes);
         self.y_offset = self.y_offset.max(max_offset);
     }
 
     fn update_anchor(&mut self) {
-        self.cur.anchor_x = self.cur.block.borrow().abs_cur_x(
-            self.cur.line, self.cur.pos, &self.ctx);
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        self.cur.anchor_x = blocks[self.cur.block].abs_cur_x(
+            self.cur.line, self.cur.pos, &self.ctx, blocks, nodes);
     }
 
-    fn collapse_block(&mut self, block: &Refed<Block>) {
-        assert!(block.borrow().expanded);
-        if block.borrow().depth <= self.cur.block.borrow().depth {
-            let mut b = self.cur.block.clone();
-            while block.borrow().depth < b.borrow().depth {
-                let p = b.borrow().parent_idx.as_ref().unwrap().0.clone();
-                b = p;
+    fn collapse_block(&mut self, block: BlockKey) {
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        assert!(blocks[block].expanded);
+        if blocks[block].depth <= blocks[self.cur.block].depth {
+            let mut b = self.cur.block;
+            while blocks[block].depth < blocks[b].depth {
+                b = blocks[b].parent_idx.unwrap().0;
             }
-            if block.ptr_eq(&b) {
-                let first_line_len = block.borrow().max_pos(0);
-                if block.borrow().depth < self.cur.block.borrow().depth {
-                    self.cur.block = Refed::clone(block);
+            if block == b {
+                let first_line_len = blocks[block].max_pos(0, blocks, nodes);
+                if blocks[block].depth < blocks[self.cur.block].depth {
+                    self.cur.block = block;
                     self.cur.line = 0;
                     self.cur.pos = first_line_len;
                     self.cur.sel = None;
                 } else {
-                    assert!(self.cur.block.ptr_eq(block));
+                    assert_eq!(self.cur.block, block);
                     if let Some(sel) = self.cur.sel.as_mut() {
                         if sel.line > 0 {
                             sel.line = 0;
@@ -283,12 +292,18 @@ impl App {
                 }
             }
         }
-        let mut b = block.borrow_mut();
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &mut blocks[block];
         b.expanded = false;
-        for child in b.children.drain(1..) {
+
+        let children_to_remove: Vec<_> = b.children.drain(1..).collect();
+        for child in children_to_remove {
             match child {
                 BlockChild::Leaf => {}
-                BlockChild::Block(bc) => destroy_block(bc),
+                BlockChild::Block(bc) => destroy_block(bc, blocks, nodes),
             }
         }
     }
@@ -297,24 +312,22 @@ impl App {
     // (which should only happen when selecting),
     // move it to the inner line of text.
     fn sink_cursor(&mut self) {
+        let blocks = &self.blocks;
+
         self.cur.sel = None;
-        let b = self.cur.block.borrow();
+        let b = &blocks[self.cur.block];
         match b.children[self.cur.line] {
             BlockChild::Leaf => {},
-            BlockChild::Block(ref child_block) => {
+            BlockChild::Block(child_block) => {
                 match self.cur.pos {
                     0 => {
-                        let child_block = child_block.make_ref();
-                        drop(b);
                         self.cur.block = child_block;
                         self.cur.line = 0;
                         self.cur.pos = 0;
                     }
                     1 => {
-                        let child_block = child_block.make_ref();
-                        drop(b);
-                        let (block, line) = last_leaf(child_block);
-                        self.cur.pos = block.borrow().max_pos(line);
+                        let (block, line) = last_leaf(child_block, blocks);
+                        self.cur.pos = blocks[block].max_pos(line, blocks, &self.nodes);
                         self.cur.line = line;
                         self.cur.block = block;
                     }
@@ -326,29 +339,30 @@ impl App {
 
     fn left(&mut self) {
         self.sink_cursor();
-        let b = self.cur.block.borrow();
-        match b.children[self.cur.line] {
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+        match blocks[self.cur.block].children[self.cur.line] {
             BlockChild::Block(_) => panic!(),
             BlockChild::Leaf => {
-                let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-                let node = node.borrow();
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
                 if let Some(pos) = prev_char_pos(text, self.cur.pos) {
                     self.cur.pos = pos;
                     return;
                 }
-                drop(b);
-                let leaf = (Refed::clone(&self.cur.block), self.cur.line);
-                if let Some((prev_block, prev_line)) = prev_leaf(leaf) {
-                    let b = prev_block.borrow();
-                    let (node, line_idx) = b.node_line_idx(prev_line).unwrap();
-                    let node = node.borrow();
+                let leaf = (self.cur.block, self.cur.line);
+                if let Some((prev_block, prev_line)) = prev_leaf(leaf, blocks) {
+                    let b = &blocks[prev_block];
+                    let (node, line_idx) = b.node_line_idx(prev_line, blocks).unwrap();
+                    let node = &nodes[node];
                     let text = &node.lines[line_idx].line.text();
                     
                     self.cur.pos = text.len();
                     self.cur.line = prev_line;
-
-                    drop(b);
                     self.cur.block = prev_block;
                 }
             }
@@ -357,20 +371,23 @@ impl App {
 
     fn right(&mut self) {
         self.sink_cursor();
-        let b = self.cur.block.borrow();
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
         match b.children[self.cur.line] {
             BlockChild::Block(_) => panic!(),
             BlockChild::Leaf => {
-                let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-                let node = node.borrow();
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
                 if let Some(pos) = next_char_pos(text, self.cur.pos) {
                     self.cur.pos = pos;
                     return;
                 }
-                drop(b);
-                let leaf = (Refed::clone(&self.cur.block), self.cur.line);
-                if let Some((next_block, next_line)) = next_leaf(leaf) {
+                let leaf = (self.cur.block, self.cur.line);
+                if let Some((next_block, next_line)) = next_leaf(leaf, blocks) {
                     self.cur.line = next_line;
                     self.cur.pos = 0;
                     self.cur.block = next_block;
@@ -381,9 +398,13 @@ impl App {
 
     fn up(&mut self) {
         self.sink_cursor();
-        let b = self.cur.block.borrow();
-        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-        let node = node.borrow();
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &nodes[node];
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
@@ -393,16 +414,14 @@ impl App {
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
             self.cur.pos = layout.coords_to_pos(x, cc.top - eps);
         } else {
-            let prev_leaf = prev_leaf((Refed::clone(&self.cur.block), self.cur.line));
+            let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
             if let Some((prev_block, prev_idx)) = prev_leaf {
-                drop(node);
-                drop(b);
-                let b = prev_block.borrow();
+                let b = &blocks[prev_block];
 
-                let y = b.size(&self.ctx).1 - eps;
+                let y = b.size(&self.ctx, blocks, nodes).1 - eps;
 
-                let (node, line_idx) = b.node_line_idx(prev_idx).unwrap();
-                let node = node.borrow();
+                let (node, line_idx) = b.node_line_idx(prev_idx, blocks).unwrap();
+                let node = &nodes[node];
                 let layout = node.line_layout(line_idx, &self.ctx);
 
                 let x = self.cur.anchor_x
@@ -410,7 +429,6 @@ impl App {
 
                 self.cur.line = prev_idx;
                 self.cur.pos = layout.coords_to_pos(x, y);
-                drop(b);
                 self.cur.block = prev_block;
             }
         }
@@ -418,9 +436,13 @@ impl App {
 
     fn down(&mut self) {
         self.sink_cursor();
-        let b = self.cur.block.borrow();
-        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-        let node = node.borrow();
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &nodes[node];
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
@@ -430,16 +452,14 @@ impl App {
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
             self.cur.pos = layout.coords_to_pos(x, cc.top + cc.height + eps);
         } else {
-            let next_leaf = next_leaf((Refed::clone(&self.cur.block), self.cur.line));
+            let next_leaf = next_leaf((self.cur.block, self.cur.line), blocks);
             if let Some((next_block, next_idx)) = next_leaf {
-                drop(node);
-                drop(b);
-                let b = next_block.borrow();
+                let b = &blocks[next_block];
 
                 let y = eps;
 
-                let (node, line_idx) = b.node_line_idx(next_idx).unwrap();
-                let node = node.borrow();
+                let (node, line_idx) = b.node_line_idx(next_idx, blocks).unwrap();
+                let node = &nodes[node];
                 let layout = node.line_layout(line_idx, &self.ctx);
 
                 let x = self.cur.anchor_x
@@ -447,7 +467,6 @@ impl App {
 
                 self.cur.line = next_idx;
                 self.cur.pos = layout.coords_to_pos(x, y);
-                drop(b);
                 self.cur.block = next_block;
             }
         }
@@ -456,8 +475,11 @@ impl App {
     fn put_char(&mut self, c: char) {
         assert!(self.cur.sel.is_none(), "TODO");
 
-        let (node, line_idx) = self.cur.block.borrow().node_line_idx(self.cur.line).unwrap();
-        let mut node = node.borrow_mut();
+        let blocks = &self.blocks;
+        let nodes = &mut self.nodes;
+
+        let (node, line_idx) = blocks[self.cur.block].node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &mut nodes[node];
         let line = &mut node.lines[line_idx];
         let text = line.line.text_mut();
 
@@ -470,9 +492,12 @@ impl App {
     fn enter(&mut self) {
         assert!(self.cur.sel.is_none(), "TODO");
 
-        let mut b = self.cur.block.borrow_mut();
-        let (node, line_idx) = b.node_line_idx(self.cur.line).unwrap();
-        let mut node = node.borrow_mut();
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &mut nodes[node];
         let line = &mut node.lines[line_idx];
         let text = line.line.text_mut();
 
@@ -481,22 +506,22 @@ impl App {
         line.layout = OnceCell::new();
 
         if self.cur.line == 0 {
-            drop(node);
-
-            b.node.borrow_mut().lines.insert(0, LineWithLayout {
+            nodes[b.node].lines.insert(0, LineWithLayout {
                 line: Line::Text { text: tail, monospace: false },
                 layout: OnceCell::new(),
             });
 
             assert!(b.expanded, "TODO");
+            let b = &mut blocks[self.cur.block];
             b.children.insert(1, BlockChild::Leaf);
 
             // update parent idx for all children
-            for child in &mut b.children[1..] {
-                match child {
+            let b = self.cur.block;
+            for i in 1..blocks[b].children.len() {
+                match blocks[b].children[i] {
                     BlockChild::Leaf => {},
                     BlockChild::Block(b) => {
-                        b.borrow_mut().parent_idx.as_mut().unwrap().1 += 1;
+                        blocks[b].parent_idx.as_mut().unwrap().1 += 1;
                     }
                 }
             }
@@ -515,14 +540,15 @@ impl App {
 
             self.cur.line += 1;
             self.cur.pos = 0;
-            b.children.insert(self.cur.line, BlockChild::Leaf);
+            let b = self.cur.block;
+            blocks[b].children.insert(self.cur.line, BlockChild::Leaf);
 
             // update parent idx for all children
-            for child in &mut b.children[self.cur.line + 1..] {
-                match child {
+            for i in self.cur.line + 1 .. blocks[b].children.len() {
+                match blocks[b].children[i] {            
                     BlockChild::Leaf => {},
                     BlockChild::Block(b) => {
-                        b.borrow_mut().parent_idx.as_mut().unwrap().1 += 1;
+                        blocks[b].parent_idx.as_mut().unwrap().1 += 1;
                     }
                 }
             }
@@ -541,7 +567,11 @@ fn paint(app: &mut App) {
             cur: &app.cur,
         };
         let mut y = app.y_offset;
-        gfx::accept_block(&app.root_block, &mut v, &mut y, &app.ctx);
+
+        let blocks = &app.blocks;
+        let nodes = &app.nodes;
+
+        gfx::accept_block(app.root_block, &mut v, &mut y, &app.ctx, blocks, nodes);
 
         let hr = rt.EndDraw(null_mut(), null_mut());
         assert!(hr != D2DERR_RECREATE_TARGET, "TODO");
@@ -557,12 +587,9 @@ impl WindowProcState for App {
     )-> Option<LRESULT> {
         if msg == WM_DESTROY {
             eprintln!("{}", win_msg_name(msg));
-            // TODO: all Refed<> in app state should be cleaned up,
-            // otherwise Owned<> destructors will report dangling refs.
-            std::process::exit(0);
-            // unsafe {
-            //     PostQuitMessage(0);
-            // }
+            unsafe {
+                PostQuitMessage(0);
+            }
         }
         if msg == WM_SIZE {
             println!("{}", win_msg_name(msg));
@@ -598,7 +625,10 @@ impl WindowProcState for App {
                 result: gfx::MouseResult::Nothing,
             };
             let mut yy = app.y_offset;
-            gfx::accept_block(&app.root_block, &mut v, &mut yy, &app.ctx);
+            gfx::accept_block(
+                app.root_block, &mut v, &mut yy,
+                &app.ctx,
+                &app.blocks, &app.nodes);
             let cur = match v.result {
                 gfx::MouseResult::Nothing => app.ctx.arrow_cursor,
                 gfx::MouseResult::Cur { .. } => app.ctx.beam_cursor,
@@ -612,7 +642,7 @@ impl WindowProcState for App {
             let x = GET_X_LPARAM(lparam);
             let y = GET_Y_LPARAM(lparam);
             println!("{} {} {}", win_msg_name(msg), x, y);
-            let mut app = sr.state_mut();
+            let app = &mut *sr.state_mut();
             let mut v = gfx::MouseClickVisitor {
                 x: x as f32,
                 y: y as f32,
@@ -620,7 +650,10 @@ impl WindowProcState for App {
                 result: gfx::MouseResult::Nothing,
             };
             let mut yy = app.y_offset;
-            gfx::accept_block(&app.root_block, &mut v, &mut yy, &app.ctx);
+            gfx::accept_block(
+                app.root_block, &mut v, &mut yy,
+                &app.ctx,
+                &app.blocks, &app.nodes);
             match v.result {
                 gfx::MouseResult::Nothing => {}
                 gfx::MouseResult::Cur { block, line, pos } => {
@@ -635,12 +668,14 @@ impl WindowProcState for App {
                     invalidate_rect(hwnd);
                 }
                 gfx::MouseResult::Toggle { block } => {
-                    if block.borrow().expanded {
-                        app.collapse_block(&block);
+                    let blocks = &mut app.blocks;
+                    let nodes = &mut app.nodes;
+                    if blocks[block].expanded {
+                        app.collapse_block(block);
                         app.update_anchor();
                         invalidate_rect(hwnd);
                     } else {
-                        expand_block(&block);
+                        expand_block(block, blocks, nodes);
                         app.update_anchor();
                         invalidate_rect(hwnd);
                     }

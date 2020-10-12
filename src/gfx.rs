@@ -4,7 +4,6 @@ use wio::com::ComPtr;
 use crate::{AppCtx, Cur};
 use crate::text_layout::{TextLayout, CursorCoord};
 use crate::types::*;
-use crate::owned_ref::{Owned, Refed};
 
 impl Node {
     pub(crate) fn line_layout(&self, idx: usize, ctx: &AppCtx) -> &TextLayout {
@@ -46,50 +45,63 @@ fn layout_size(layout: &TextLayout) -> (f32, f32) {
 }
 
 impl Block {
-    pub(crate) fn size(&self, ctx: &AppCtx) -> (f32, f32) {
+    pub(crate) fn size(
+        &self,
+        ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> (f32, f32) {
         let mut w = 0.0f32;
         let mut h = 0.0f32;
         for i in 0..self.children.len() {
-            let (ww, hh) = self.child_size(i, ctx);
+            let (ww, hh) = self.child_size(i, ctx, blocks, nodes);
             h += hh;
             w = w.max(ww);
         }
         (w + INDENT, h)
     }
 
-    pub(crate) fn last_line_height(&self, ctx: &AppCtx) -> f32 {
-        match self.children.last().unwrap() {
+    pub(crate) fn last_line_height(
+        &self, ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> f32 {
+        match *self.children.last().unwrap() {
             BlockChild::Leaf => {
-                let (node, line_idx) = self.node_line_idx(self.children.len() - 1).unwrap();
-                let node = node.borrow();
-                let layout = node.line_layout(line_idx, ctx);
+                let (node, line_idx) = self.node_line_idx(
+                    self.children.len() - 1, blocks).unwrap();
+                let layout = nodes[node].line_layout(line_idx, ctx);
                 layout.cursor_coord(layout.text.len()).height
             }
-            BlockChild::Block(ref b) => b.borrow().last_line_height(ctx),
+            BlockChild::Block(b) => blocks[b].last_line_height(ctx, blocks, nodes),
         }
     }
 
-    pub(crate) fn child_size(&self, idx: usize, ctx: &AppCtx) -> (f32, f32) {
+    pub(crate) fn child_size(
+        &self,
+        idx: usize,
+        ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> (f32, f32) {
         match self.children[idx] {
             BlockChild::Leaf => {
-                if let Some((node, line_idx)) = self.node_line_idx(idx) {
-                    let node = node.borrow();
-                    let layout = node.line_layout(line_idx, ctx);
+                if let Some((node, line_idx)) = self.node_line_idx(idx, blocks) {
+                    let layout = nodes[node].line_layout(line_idx, ctx);
                     layout_size(layout)
                 } else {
                     (0.0, 0.0)  // header of the root block is not displayed
                 }
             }
-            BlockChild::Block(ref b) => b.borrow().size(ctx),
+            BlockChild::Block(b) => blocks[b].size(ctx, blocks, nodes),
         }
     }
 
-    pub(crate) fn max_pos(&self, idx: usize) -> usize {
+    pub(crate) fn max_pos(
+        &self, idx: usize,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> usize {
         match self.children[idx] {
             BlockChild::Leaf => {
-                let (node, line_idx) = self.node_line_idx(idx).unwrap();
-                let node = node.borrow();
-                match node.lines[line_idx].line {
+                let (node, line_idx) = self.node_line_idx(idx, blocks).unwrap();
+                match nodes[node].lines[line_idx].line {
                     Line::Text { ref text, .. } => text.len(),
                     Line::Node { ref local_header, .. } => local_header.len(),
                 }
@@ -100,24 +112,28 @@ impl Block {
 }
 
 pub trait BlockVisitor {
-    fn visit_child(&mut self, block: Refed<Block>, idx: usize, x: f32, y: f32);
+    fn visit_child(
+        &mut self, block: BlockKey, idx: usize, x: f32, y: f32,
+        blocks: &Blocks, nodes: &Nodes,
+    );
 }
 
 pub(crate) fn accept_block(
-    block: &Owned<Block>,
+    block: BlockKey,
     visitor: &mut dyn BlockVisitor,
     y: &mut f32,
     ctx: &AppCtx,
+    blocks: &Blocks, nodes: &Nodes,
 ) {
-    let b = block.borrow();
+    let b = &blocks[block];
     let x = X_OFFSET + b.depth as f32 * INDENT;
     for (i, child) in b.children.iter().enumerate() {
-        visitor.visit_child(block.make_ref(), i, x, *y);
-        match child {
+        visitor.visit_child(block, i, x, *y, blocks, nodes);
+        match *child {
             BlockChild::Leaf =>
-                *y += b.child_size(i, ctx).1,
+                *y += b.child_size(i, ctx, blocks, nodes).1,
             BlockChild::Block(b) =>
-                accept_block(b, visitor, y, ctx),
+                accept_block(b, visitor, y, ctx, blocks, nodes),
         }
     }
 }
@@ -153,10 +169,14 @@ pub struct DrawVisitor<'a> {
 }
 
 impl<'a> BlockVisitor for DrawVisitor<'a> {
-    fn visit_child(&mut self, block: Refed<Block>, idx: usize, x: f32, y: f32) {
+    fn visit_child(
+        &mut self, block: BlockKey, idx: usize, x: f32, y: f32,
+        blocks: &Blocks,
+        nodes: &Nodes,
+    ) {
         let mut cur_pos = None;
         let mut sel = None;
-        if block.ptr_eq(&self.cur.block) {
+        if block == self.cur.block {
             if idx == self.cur.line {
                 cur_pos = Some(self.cur.pos);
             }
@@ -173,21 +193,21 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                         0
                     };
                     let (sel_end_pos, include_newline) = if end_line == idx {
-                        assert!(end_pos <= block.borrow().max_pos(idx));
+                        assert!(end_pos <= blocks[block].max_pos(idx, blocks, nodes));
                         (end_pos, false)
                     } else {
-                        (block.borrow().max_pos(idx), true)
+                        (blocks[block].max_pos(idx, blocks, nodes), true)
                     };
                     sel = Some((sel_start_pos, sel_end_pos, include_newline));
                 }
             }
         }
 
-        let b = block.borrow();
+        let b = &blocks[block];
         match b.children[idx] {
             BlockChild::Leaf => {
-                if let Some((node, line_idx)) = b.node_line_idx(idx) {
-                    let node = node.borrow();
+                if let Some((node, line_idx)) = b.node_line_idx(idx, blocks) {
+                    let node = &nodes[node];
                     let layout = node.line_layout(line_idx, self.ctx);
 
                     if let Some((sel_start_pos, sel_end_pos, include_newline)) = sel {
@@ -216,9 +236,9 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     }                
                 }
             }
-            BlockChild::Block(ref b) => {
+            BlockChild::Block(b) => {
                 if let Some((0, 1, _)) = sel {
-                    let (w, h) = b.borrow().size(self.ctx);
+                    let (w, h) = blocks[b].size(self.ctx, blocks, nodes);
                     let rect = D2D1_RECT_F {
                         left: x,
                         top: y,
@@ -240,7 +260,7 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     bottom: yy + BULLET_SIZE,
                 };
                 unsafe {
-                    if !b.borrow().expanded {
+                    if !blocks[b].expanded {
                         self.ctx.render_target.FillRectangle(
                             &rect, self.ctx.text_brush.as_raw());
                     }
@@ -250,27 +270,30 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
             }
         }
         if let Some(pos) = cur_pos {
-            let cc = b.cursor_coord(idx, pos, self.ctx);
+            let cc = b.cursor_coord(idx, pos, self.ctx, blocks, nodes);
             draw_cursor(&self.ctx.render_target, &self.ctx.cursor_brush, x, y, &cc);
         }        
     }
 }
 
 impl Block {
-    pub(crate) fn cursor_coord(&self, idx: usize, pos: usize, ctx: &AppCtx) -> CursorCoord {
+    pub(crate) fn cursor_coord(
+        &self, idx: usize, pos: usize,
+        ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> CursorCoord {
         match self.children[idx] {
             BlockChild::Leaf => {
-                let (node, line_idx) = self.node_line_idx(idx).unwrap();
-                let node = node.borrow();
-                let layout = node.line_layout(line_idx, ctx);
+                let (node, line_idx) = self.node_line_idx(idx, blocks).unwrap();
+                let layout = nodes[node].line_layout(line_idx, ctx);
                 layout.cursor_coord(pos)
             }
-            BlockChild::Block(ref b) => {
+            BlockChild::Block(b) => {
                 // TODO: get correct cursor height from child
                 match pos {
                     0 => CursorCoord { x: 0.0, top: 0.0, height: 18.0 },
                     1 => {
-                        let (w, h) = b.borrow().size(ctx);
+                        let (w, h) = blocks[b].size(ctx, blocks, nodes);
                         CursorCoord {
                             x: w,
                             top: h - 18.0,
@@ -283,8 +306,12 @@ impl Block {
         }
     }
 
-    pub(crate) fn abs_cur_x(&self, idx: usize, pos: usize, ctx: &AppCtx) -> f32 {
-        let cc = self.cursor_coord(idx, pos, ctx);
+    pub(crate) fn abs_cur_x(
+        &self, idx: usize, pos: usize,
+        ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> f32 {
+        let cc = self.cursor_coord(idx, pos, ctx, blocks, nodes);
         X_OFFSET + self.depth as f32 * INDENT + cc.x
     }
 }
@@ -292,12 +319,12 @@ impl Block {
 pub enum MouseResult {
     Nothing,
     Cur {
-        block: Refed<Block>,
+        block: BlockKey,
         line: usize,
         pos: usize,
     },
     Toggle {
-        block: Refed<Block>,
+        block: BlockKey,
     }
 }
 
@@ -309,27 +336,29 @@ pub(crate) struct MouseClickVisitor<'a> {
 }
 
 impl<'a> BlockVisitor for MouseClickVisitor<'a> {
-    fn visit_child(&mut self, block: Refed<Block>, idx: usize, x: f32, y: f32) {
-        let b = block.borrow();
+    fn visit_child(
+        &mut self, block: BlockKey, idx: usize, x: f32, y: f32,
+        blocks: &Blocks, nodes: &Nodes,
+    ) {
+        let b = &blocks[block];
         match b.children[idx] {
             BlockChild::Leaf => {
-                if let Some((node, line_idx)) = b.node_line_idx(idx) {
-                    let node = node.borrow();
+                if let Some((node, line_idx)) = b.node_line_idx(idx, blocks) {
+                    let node = &nodes[node];
                     let layout = node.line_layout(line_idx, self.ctx);
                     if y <= self.y && self.y <= y + layout.height {
                         let pos = layout.coords_to_pos(self.x - x, self.y - y);
-                        drop(b);
                         if let MouseResult::Nothing = self.result {
                             self.result = MouseResult::Cur { block, line: idx, pos };
                         }
                     }
                 }
             }
-            BlockChild::Block(ref b) => {
+            BlockChild::Block(b) => {
                 let dx = x + BULLET_OFFSET_X + 0.5 * BULLET_SIZE - self.x;
                 let dy = y + BULLET_OFFSET_Y + 0.5 * BULLET_SIZE - self.y;
                 if dx * dx + dy * dy <= BULLET_MOUSE_RADIUS * BULLET_MOUSE_RADIUS {
-                    self.result = MouseResult::Toggle { block: b.make_ref() };
+                    self.result = MouseResult::Toggle { block: b };
                 }
             }
         }
