@@ -195,7 +195,7 @@ impl App {
                 text_line("if name == '__main__':", true),
                 text_line("    print('hello')", true),
                 text_line("Stuff...", false),
-                node_line("zzz\nnode", node1),
+                node_line("zzz", node1),
                 text_line("Stuff.", false),
             ],
             blocks: vec![],
@@ -260,7 +260,6 @@ impl App {
         self.y_offset += delta * 18.0;
         self.y_offset = self.y_offset.min(10.0);
         let height = blocks[self.root_block].size(&self.ctx, blocks, nodes).1;
-        dbg!(blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes));
         let max_offset = 10.0 - height
             + blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes);
         self.y_offset = self.y_offset.max(max_offset);
@@ -514,6 +513,10 @@ impl App {
         let blocks = &mut self.blocks;
         let nodes = &mut self.nodes;
 
+        if self.cur.line == 0 && !blocks[self.cur.block].expanded {
+            expand_block(self.cur.block, blocks, nodes);
+        }
+
         let b = &blocks[self.cur.block];
         let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
         let node = &mut nodes[node];
@@ -530,7 +533,7 @@ impl App {
                 layout: OnceCell::new(),
             });
 
-            assert!(b.expanded, "TODO");
+            assert!(b.expanded);
             let b = &mut blocks[self.cur.block];
             b.children.insert(1, BlockChild::Leaf);
 
