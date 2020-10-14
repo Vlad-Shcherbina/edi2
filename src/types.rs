@@ -7,6 +7,7 @@ pub type Nodes = SlotMap<NodeKey, Node>;
 new_key_type!(pub BlockKey);
 pub type Blocks = SlotMap<BlockKey, Block>;
 
+#[derive(Clone)]
 pub enum Line {
     Text {
         text: String,

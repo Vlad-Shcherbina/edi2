@@ -598,12 +598,58 @@ impl App {
 
         if  blocks[prev_block].depth > b.depth {
             if prev_idx == 0 && !blocks[prev_block].expanded {
+                // TODO: silent autoexpand if it's one-line node
                 expand_block(prev_block, blocks, nodes);
                 return;
             }
         } else if prev_block != self.cur.block {
             assert_eq!(self.cur.line, 0);
-            todo!("delete bullet");
+
+            if !b.expanded {
+                // TODO: silent autoexpand if it's one-line node
+                expand_block(self.cur.block, blocks, nodes);
+                return;
+            }
+
+            let (parent_block, idx_in_parent) = b.parent_idx.unwrap();
+            
+            let mut ancestor = parent_block;
+            loop {
+                if blocks[ancestor].node == b.node {
+                    // TODO: maybe move cursor to this ancestor block instead.
+                    todo!("paradox");
+                }
+                ancestor = match blocks[ancestor].parent_idx {
+                    None => break,
+                    Some(x) => x.0,
+                };
+            }
+
+            let mut lines = splice_node_lines(
+                blocks[self.cur.block].node,
+                0, nodes[blocks[self.cur.block].node].lines.len(),
+                vec![],
+                blocks, nodes);
+
+            assert!(idx_in_parent > 0);
+            let parent_node = blocks[parent_block].node;
+            let line = &nodes[parent_node].lines[idx_in_parent - 1].line;
+            let local_header = match line {
+                Line::Text {..} => panic!(),
+                Line::Node { ref local_header, ..} => local_header.to_owned(),
+            };
+
+            lines.insert(0, Line::Text { text: local_header, monospace: false });
+
+            splice_node_lines(
+                blocks[parent_block].node,
+                idx_in_parent - 1, idx_in_parent,
+                lines,
+                blocks, nodes);
+            self.cur.block = parent_block;
+            self.cur.line = idx_in_parent;
+            self.cur.pos = 0;
+            return;
         }
 
         let text = text.to_owned();
