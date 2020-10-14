@@ -497,9 +497,34 @@ impl App {
         let nodes = &mut self.nodes;
 
         let (node, line_idx) = blocks[self.cur.block].node_line_idx(self.cur.line, blocks).unwrap();
-        let node = &mut nodes[node];
-        let line = &mut node.lines[line_idx];
+        let line = &mut nodes[node].lines[line_idx];
         let text = line.line.text_mut();
+
+        if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with("*") {
+            let local_header = text[1..].to_owned();
+            let blocks = &mut self.blocks;
+            let new_node = nodes.insert(Node {
+                lines: vec![],
+                blocks: vec![],
+            });
+            let new_block = blocks.insert(Block {
+                depth: blocks[self.cur.block].depth + 1,
+                parent_idx: Some((self.cur.block, self.cur.line)),
+                node: new_node,
+                children: vec![BlockChild::Leaf],
+                expanded: false,
+            });
+            nodes[new_node].blocks.push(new_block);
+            nodes[node].lines[line_idx] = LineWithLayout {
+                line: Line::Node { local_header, node: new_node },
+                layout: OnceCell::new(),
+            };
+            blocks[self.cur.block].children[self.cur.line] = BlockChild::Block(new_block);
+            self.cur.block = new_block;
+            self.cur.line = 0;
+            self.cur.pos = 0;
+            return;
+        }
 
         text.insert(self.cur.pos, c);
         self.cur.pos += c.len_utf8();
