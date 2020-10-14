@@ -9,6 +9,7 @@ mod text_layout;
 pub mod gfx;
 mod util;
 pub mod types;
+pub mod edit;
 
 use std::ptr::null_mut;
 use once_cell::unsync::OnceCell;
@@ -26,6 +27,7 @@ use crate::win_win_reent::*;
 use crate::win_util::*;
 use crate::util::*;
 use crate::types::*;
+use crate::edit::*;
 
 struct AppCtx {
     arrow_cursor: HCURSOR,
@@ -195,6 +197,7 @@ impl App {
                 text_line("if name == '__main__':", true),
                 text_line("    print('hello')", true),
                 text_line("Stuff...", false),
+                node_line("zzz", node1),
                 node_line("zzz", node1),
                 text_line("Stuff.", false),
             ],
@@ -553,53 +556,20 @@ impl App {
         line.layout = OnceCell::new();
 
         if self.cur.line == 0 {
-            nodes[b.node].lines.insert(0, LineWithLayout {
-                line: Line::Text { text: tail, monospace: false },
-                layout: OnceCell::new(),
-            });
-
-            assert!(b.expanded);
-            let b = &mut blocks[self.cur.block];
-            b.children.insert(1, BlockChild::Leaf);
-
-            // update parent idx for all children
-            let b = self.cur.block;
-            for i in 1..blocks[b].children.len() {
-                match blocks[b].children[i] {
-                    BlockChild::Leaf => {},
-                    BlockChild::Block(b) => {
-                        blocks[b].parent_idx.as_mut().unwrap().1 += 1;
-                    }
-                }
-            }
-            self.cur.line += 1;
-            self.cur.pos = 0;
+            splice_node_lines(b.node, 0, 0, 
+                vec![Line::Text { text: tail, monospace: false }],
+                blocks, nodes);
         } else {
             let monospace = match line.line {
                 Line::Text { monospace, .. } => monospace,
                 Line::Node { .. } => panic!(),
             };
-
-            node.lines.insert(line_idx + 1, LineWithLayout {
-                line: Line::Text { text: tail, monospace },
-                layout: OnceCell::new(),
-            });
-
-            self.cur.line += 1;
-            self.cur.pos = 0;
-            let b = self.cur.block;
-            blocks[b].children.insert(self.cur.line, BlockChild::Leaf);
-
-            // update parent idx for all children
-            for i in self.cur.line + 1 .. blocks[b].children.len() {
-                match blocks[b].children[i] {            
-                    BlockChild::Leaf => {},
-                    BlockChild::Block(b) => {
-                        blocks[b].parent_idx.as_mut().unwrap().1 += 1;
-                    }
-                }
-            }
+            splice_node_lines(b.node, line_idx + 1, line_idx + 1,
+                vec![Line::Text { text: tail, monospace }],
+                blocks, nodes);
         }
+        self.cur.line += 1;
+        self.cur.pos = 0;
     }
 
     fn tab(&mut self) {
