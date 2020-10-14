@@ -572,6 +572,52 @@ impl App {
         self.cur.pos = 0;
     }
 
+    fn backspace(&mut self) {
+        assert!(self.cur.sel.is_none(), "TODO");
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let line = &mut nodes[node].lines[line_idx];
+        let text = line.line.text_mut();
+
+        if let Some(prev_pos) = prev_char_pos(text, self.cur.pos) {
+            text.remove(prev_pos);
+            line.layout = OnceCell::new();
+            self.cur.pos = prev_pos;
+            return;
+        }
+
+        let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
+        let (prev_block, prev_idx) = match prev_leaf {
+            Some(x) => x,
+            None => return,
+        };
+
+        if  blocks[prev_block].depth > b.depth {
+            if prev_idx == 0 && !blocks[prev_block].expanded {
+                expand_block(prev_block, blocks, nodes);
+                return;
+            }
+        } else if prev_block != self.cur.block {
+            assert_eq!(self.cur.line, 0);
+            todo!("delete bullet");
+        }
+
+        let text = text.to_owned();
+        let (prev_node, prev_line_idx) = blocks[prev_block].node_line_idx(prev_idx, blocks).unwrap();
+        let prev_line = &mut nodes[prev_node].lines[prev_line_idx];
+        let prev_text = prev_line.line.text_mut();
+        self.cur.block = prev_block;
+        self.cur.line = prev_idx;
+        self.cur.pos = prev_text.len();
+        prev_line.layout = OnceCell::new();
+        prev_text.push_str(&text);
+        splice_node_lines(node, line_idx, line_idx + 1, vec![], blocks, nodes);
+    }
+
     fn tab(&mut self) {
         if self.cur.sel.is_some() {
             return;  // TODO?
@@ -732,6 +778,10 @@ impl WindowProcState for App {
             }
             if key_code == VK_DOWN {
                 app.down();
+            }
+            if key_code == VK_BACK {
+                app.backspace();
+                app.update_anchor();
             }
             invalidate_rect(hwnd);
         }

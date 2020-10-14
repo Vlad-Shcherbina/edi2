@@ -19,9 +19,6 @@ pub fn splice_node_lines(
         if !b.expanded {
             continue;
         }
-        if num_old_lines > 0 {
-            todo!("remove old children")
-        }
 
         let mut children = std::mem::replace(&mut blocks[block].children, vec![]);
         for i in end_line + 1 .. children.len() {
@@ -35,12 +32,18 @@ pub fn splice_node_lines(
             }
         }
 
-        children.splice(start_line + 1 .. end_line + 1,
+        let old_children = children.splice(start_line + 1 .. end_line + 1,
             nodes[node].lines[start_line..start_line + num_new_lines]
                 .iter().map(|line| match line.line {
                     Line::Text {..} => BlockChild::Leaf,
                     Line::Node {..} => todo!(),
                 }));
+        for old_child in old_children {
+            match old_child {
+                BlockChild::Leaf => {},
+                BlockChild::Block(_) => todo!(),
+            }
+        }
 
         blocks[block].children = children;
     }
