@@ -1,5 +1,20 @@
+use std::collections::HashSet;
 use once_cell::unsync::OnceCell;
 use crate::types::*;
+
+fn for_each_block_descendant(
+    block: BlockKey,
+    blocks: &Blocks,
+    f: &mut impl FnMut(BlockKey),
+) {
+    f(block);
+    for child in &blocks[block].children {
+        match *child {
+            BlockChild::Leaf => {}
+            BlockChild::Block(b) => for_each_block_descendant(b, blocks, f),
+        }
+    }
+}
 
 pub fn splice_node_lines(
     node: NodeKey,
@@ -16,8 +31,14 @@ pub fn splice_node_lines(
             |line| LineWithLayout { line, layout: OnceCell::new() }));
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
 
-    let bs = nodes[node].blocks.clone();
-    for &block in &bs {
+    let mut bs = HashSet::with_capacity(nodes[node].blocks.len());
+    for &block in &nodes[node].blocks {
+        let was_new = bs.insert(block);
+        assert!(was_new);
+    }
+    while let Some(&block) = bs.iter().next() {
+        bs.remove(&block);
+
         // TODO: it is possible that this block was destroyed on previous iterations
         let b = &mut blocks[block];
         if !b.expanded {
@@ -66,7 +87,12 @@ pub fn splice_node_lines(
         for old_child in old_children {
             match old_child {
                 BlockChild::Leaf => {},
-                BlockChild::Block(bb) => crate::destroy_block(bb, blocks, nodes),
+                BlockChild::Block(bb) => {
+                    for_each_block_descendant(bb, blocks, &mut |b| {
+                        bs.remove(&b);
+                    });
+                    crate::destroy_block(bb, blocks, nodes);
+                }
             }
         }
 

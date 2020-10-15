@@ -190,6 +190,7 @@ impl App {
             ],
             blocks: vec![],
         });
+        nodes[node2].lines.push(node_line("recursion", node1));
 
         let root_node = nodes.insert(Node {
             lines: vec![
@@ -605,24 +606,23 @@ impl App {
         } else if prev_block != self.cur.block {
             assert_eq!(self.cur.line, 0);
 
-            if !b.expanded {
-                // TODO: silent autoexpand if it's one-line node
-                expand_block(self.cur.block, blocks, nodes);
-                return;
-            }
-
             let (parent_block, idx_in_parent) = b.parent_idx.unwrap();
-            
             let mut ancestor = parent_block;
             loop {
                 if blocks[ancestor].node == b.node {
-                    // TODO: maybe move cursor to this ancestor block instead.
-                    todo!("paradox");
+                    self.cur.block = ancestor;
+                    return;
                 }
                 ancestor = match blocks[ancestor].parent_idx {
                     None => break,
                     Some(x) => x.0,
                 };
+            }
+
+            if !b.expanded {
+                // TODO: silent autoexpand if it's one-line node
+                expand_block(self.cur.block, blocks, nodes);
+                return;
             }
 
             let mut lines = splice_node_lines(

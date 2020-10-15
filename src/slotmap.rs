@@ -150,7 +150,7 @@ impl<K: Key, T> std::ops::IndexMut<K> for SlotMap<K, T> {
 macro_rules! new_key_type {
     ($vis:vis $name:ident) => {
 
-        #[derive(Clone, Copy, PartialEq, Eq)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         $vis struct $name(std::num::NonZeroU32);
 
         impl $crate::slotmap::Key for $name {
