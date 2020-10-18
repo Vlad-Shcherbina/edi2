@@ -25,8 +25,8 @@ pub struct StateRef<'s, S>(&'s RefCell<S>);
 /// Allows to get either mutable state, or reentrancy token,
 /// but not at the same time.
 impl<'s, S> StateRef<'s, S> {
-    pub fn state_mut<'a>(&'a mut self)
-    -> impl Deref<Target=S> + DerefMut<Target=S> + 'a {
+    pub fn state_mut(&mut self)
+    -> impl Deref<Target=S> + DerefMut<Target=S> + '_ {
         self.0.borrow_mut()
     }
 

@@ -504,7 +504,7 @@ impl App {
         let line = &mut nodes[node].lines[line_idx];
         let text = line.line.text_mut();
 
-        if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with("*") {
+        if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with('*') {
             let local_header = text[1..].to_owned();
             let blocks = &mut self.blocks;
             let new_node = nodes.insert(Node {
