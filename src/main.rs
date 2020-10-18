@@ -89,8 +89,12 @@ pub struct Cur {
 }
 
 pub struct Sel {
-    pub pos: usize,
-    pub line: usize,
+    line: usize,
+    pos: usize,
+
+    anchor_path: Vec<usize>,
+    anchor_line: usize,
+    anchor_pos: usize,
 }
 
 struct App {
@@ -222,13 +226,10 @@ impl App {
             blocks,
             cur: Cur {
                 block: root_block,
-                line: 5,
-                pos: 1,
+                line: 1,
+                pos: 0,
                 anchor_x: 0.0,
-                sel: Some(Sel {
-                    line: 5,
-                    pos: 0,
-                })
+                sel: None,
             },
             root_block,
             y_offset: 10.0,
@@ -414,6 +415,205 @@ impl App {
                     self.cur.pos = 0;
                     self.cur.block = next_block;
                 }
+            }
+        }
+    }
+
+    fn shift_left(&mut self) {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+            anchor_line: line,
+            anchor_pos: pos,
+        });
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+        if (self.cur.line, self.cur.pos) <= (sel.line, sel.pos) {
+            match blocks[self.cur.block].children[self.cur.line] {
+                BlockChild::Block(_) =>
+                    if self.cur.pos == 1 {
+                        self.cur.pos = 0;
+                        return;
+                    }
+                BlockChild::Leaf => {
+                    let (node, line_idx) = blocks[self.cur.block]
+                        .node_line_idx(self.cur.line, blocks).unwrap();
+                    let text = &nodes[node].lines[line_idx].line.text();
+                    if let Some(pos) = prev_char_pos(text, self.cur.pos) {
+                        self.cur.pos = pos;
+                        return;
+                    }                        
+                }
+            }
+            if self.cur.block == self.root_block && self.cur.line == 1 {
+                return;
+            }
+            if self.cur.line > 0 {
+                self.cur.line -= 1;
+                self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+                return;
+            }
+
+            let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
+            self.cur.block = parent;
+            self.cur.line = i;
+            self.cur.pos = 0;
+
+            sel.line = i;
+            sel.pos = 1;
+            sel.anchor_path.push(i);
+        } else {
+            loop {
+                match blocks[self.cur.block].children[self.cur.line] {
+                    BlockChild::Block(_) =>
+                        if self.cur.pos == 1 {
+                            self.cur.pos = 0;
+                            break;
+                        }
+                    BlockChild::Leaf => {
+                        let (node, line_idx) = blocks[self.cur.block]
+                            .node_line_idx(self.cur.line, blocks).unwrap();
+                        let text = &nodes[node].lines[line_idx].line.text();
+                        if let Some(pos) = prev_char_pos(text, self.cur.pos) {
+                            self.cur.pos = pos;
+                            break;
+                        }                               
+                    }
+                }
+                if self.cur.line > 0 {
+                    self.cur.line -= 1;
+                    self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+                    break;
+                }
+                panic!("shouldn't happen when shrinking");
+            }
+
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                if let Some(i) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[i] {
+                        BlockChild::Leaf => panic!(),
+                        BlockChild::Block(b) => b,
+                    };
+                    self.cur.line = blocks[self.cur.block].children.len() - 1;
+                    self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+
+                    match sel.anchor_path.last() {
+                        Some(&i) => {
+                            sel.line = i;
+                            sel.pos = 0;
+                        }
+                        None => {
+                            sel.line = sel.anchor_line;
+                            sel.pos = sel.anchor_pos;
+                        }
+                    }
+                }
+            }
+
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                self.cur.sel = None;
+            }
+        }
+    }
+
+    fn shift_right(&mut self) {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+            anchor_line: line,
+            anchor_pos: pos,
+        });
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+        if (self.cur.line, self.cur.pos) >= (sel.line, sel.pos) {
+            match blocks[self.cur.block].children[self.cur.line] {
+                BlockChild::Block(_) =>
+                    if self.cur.pos == 0 {
+                        self.cur.pos = 1;
+                        return;
+                    }
+                BlockChild::Leaf => {
+                    let (node, line_idx) = blocks[self.cur.block]
+                        .node_line_idx(self.cur.line, blocks).unwrap();
+                    let text = &nodes[node].lines[line_idx].line.text();
+                    if let Some(pos) = next_char_pos(text, self.cur.pos) {
+                        self.cur.pos = pos;
+                        return;
+                    }                        
+                }
+            }
+            if self.cur.line + 1 < blocks[self.cur.block].children.len() {
+                self.cur.line += 1;
+                self.cur.pos = 0;
+                return;
+            }
+            if self.cur.block == self.root_block {
+                return;
+            }
+
+            let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
+            self.cur.block = parent;
+            self.cur.line = i;
+            self.cur.pos = 1;
+            sel.line = i;
+            sel.pos = 0;
+            sel.anchor_path.push(i);
+        } else {
+            loop {
+                match blocks[self.cur.block].children[self.cur.line] {
+                    BlockChild::Block(_) =>
+                        if self.cur.pos == 0 {
+                            self.cur.pos = 1;
+                            break;
+                        }
+                    BlockChild::Leaf => {
+                        let (node, line_idx) = blocks[self.cur.block]
+                            .node_line_idx(self.cur.line, blocks).unwrap();
+                        let text = &nodes[node].lines[line_idx].line.text();
+                        if let Some(pos) = next_char_pos(text, self.cur.pos) {
+                            self.cur.pos = pos;
+                            break;
+                        }                               
+                    }
+                }
+                if self.cur.line + 1 < blocks[self.cur.block].children.len() {
+                    self.cur.line += 1;
+                    self.cur.pos = 0;
+                    break;
+                }
+                panic!("shouldn't happen when shrinking");
+            }
+
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                if let Some(i) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[i] {
+                        BlockChild::Leaf => panic!(),
+                        BlockChild::Block(b) => b,
+                    };
+                    self.cur.line = 0;
+                    self.cur.pos = 0;
+
+                    match sel.anchor_path.last() {
+                        Some(&i) => {
+                            sel.line = i;
+                            sel.pos = blocks[self.cur.block].max_pos(i, blocks, nodes);
+                        }
+                        None => {
+                            sel.line = sel.anchor_line;
+                            sel.pos = sel.anchor_pos;
+                        }
+                    }
+                }
+            }
+
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                self.cur.sel = None;
             }
         }
     }
@@ -809,14 +1009,24 @@ impl WindowProcState for App {
         }
         if msg == WM_KEYDOWN {
             let key_code = wparam as i32;
+            let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
             println!("{} {}", win_msg_name(msg), key_code);
+
             let mut app = sr.state_mut();
             if key_code == VK_LEFT {
-                app.left();
+                if shift_pressed {
+                    app.shift_left();
+                } else {
+                    app.left();
+                }
                 app.update_anchor();
             }
             if key_code == VK_RIGHT {
-                app.right();
+                if shift_pressed {
+                    app.shift_right();
+                } else {
+                    app.right();
+                }
                 app.update_anchor();
             }
             if key_code == VK_UP {
