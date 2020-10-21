@@ -97,6 +97,11 @@ pub struct Sel {
     anchor_pos: usize,
 }
 
+struct Clipboard {
+    sequence_number: u32,
+    lines: Vec<Line>,
+}
+
 struct App {
     ctx: AppCtx,
 
@@ -106,6 +111,8 @@ struct App {
     y_offset: f32,
     root_block: BlockKey,  // owned key
     cur: Cur,
+
+    clipboard: Option<Clipboard>,
 }
 
 fn expand_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
@@ -233,6 +240,7 @@ impl App {
             },
             root_block,
             y_offset: 10.0,
+            clipboard: None,
         };
         app.update_anchor();
         app
@@ -878,6 +886,58 @@ impl App {
             }
         }
     }
+
+    fn copy(&mut self) -> (Vec<Line>, String) {
+        let sel = match self.cur.sel.as_ref() {
+            Some(sel) => sel,
+            None => return (vec![], String::new()),  // TODO: copy whole line/node?
+        };
+        let (line1, pos1) = (self.cur.line, self.cur.pos).min((sel.line, sel.pos));
+        let (line2, pos2) = (self.cur.line, self.cur.pos).max((sel.line, sel.pos));
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+        let b = &blocks[self.cur.block];
+
+        let mut lines = vec![];
+        let mut plain_text = String::new();
+        for line in line1..=line2 {
+            let start_pos = if line == line1 { pos1 } else { 0 };
+            let end_pos = if line == line2 { pos2 } else { b.max_pos(line, blocks, nodes) };
+            match b.children[line] {
+                BlockChild::Leaf => {
+                    let (node, line_idx) = b.node_line_idx(line, blocks).unwrap();
+                    let line = nodes[node].lines[line_idx].line.slice(start_pos, end_pos);
+                    plain_text.push_str(&line.text());
+                    lines.push(line);
+                },
+                BlockChild::Block(_) => {
+                    match (start_pos, end_pos) {
+                        (0, 0) | (1, 1) => {
+                            lines.push(Line::Text { text: String::new(), monospace: false });
+                        }
+                        (0, 1) => {
+                            let line = &nodes[b.node].lines[line - 1].line;
+                            let text = line.text();
+                            plain_text.push_str("* ");
+                            plain_text.push_str(text);
+                            lines.push(line.clone());
+                        }
+                        other => panic!("{:?}", other),
+                    }
+                }
+            }
+
+            if line != line2 {
+                plain_text.push('\n');
+            }
+        }
+        (lines, plain_text)
+    }
+
+    fn paste(&mut self, lines: Vec<Line>) {
+        println!("TODO: Ctrl-V {:#?}", lines);
+    }
 }
 
 fn paint(app: &mut App) {
@@ -1009,8 +1069,10 @@ impl WindowProcState for App {
         }
         if msg == WM_KEYDOWN {
             let key_code = wparam as i32;
+            let scan_code = ((lparam >> 16) & 511) as i32;
+            let ctrl_pressed = unsafe { GetKeyState(VK_CONTROL) } as u16 & 0x8000 != 0;
             let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
-            println!("{} {}", win_msg_name(msg), key_code);
+            println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
 
             let mut app = sr.state_mut();
             if key_code == VK_LEFT {
@@ -1039,6 +1101,43 @@ impl WindowProcState for App {
                 app.backspace();
                 app.update_anchor();
             }
+            if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
+                let (lines, plain_text) = app.copy();
+                drop(app);
+                let mut cm = ClipboardManager::open(hwnd);
+                cm.empty(sr.reent());
+                cm.set_private();
+                cm.set_text(&plain_text);
+                cm.close();
+                let mut app = sr.state_mut();
+                app.clipboard = Some(Clipboard {
+                    sequence_number: get_clipboard_sequence_number(),
+                    lines,
+                });
+                return None;
+            }
+            if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
+                drop(app);
+
+                let mut cm = ClipboardManager::open(hwnd);
+                let has_private = cm.has_private();
+                let plain_text = if has_private { None } else { cm.get_text() };
+                cm.close();
+
+                let mut app = sr.state_mut();
+                if has_private {
+                    let clipboard = app.clipboard.as_ref().unwrap(); 
+                    assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
+                    let lines = clipboard.lines.clone();
+                    app.paste(lines);
+                } else if let Some(plain_text) = plain_text {
+                    let lines: Vec<Line> = plain_text.split('\n')
+                        .map(|s| Line::Text { text: s.to_owned(), monospace: false })
+                        .collect();
+                    app.paste(lines);
+                }
+                return None;
+            }
             invalidate_rect(hwnd);
         }
         if msg == WM_CHAR {
@@ -1058,6 +1157,13 @@ impl WindowProcState for App {
                 app.update_anchor();
             }
             invalidate_rect(hwnd);
+        }
+        if msg == WM_DESTROYCLIPBOARD {
+            println!("{}", win_msg_name(msg));
+            let sn = get_clipboard_sequence_number();
+            let app = &mut sr.state_mut();
+            assert_eq!(sn, app.clipboard.as_ref().unwrap().sequence_number);
+            app.clipboard = None;
         }
         None
     }

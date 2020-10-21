@@ -7,7 +7,7 @@ pub type Nodes = SlotMap<NodeKey, Node>;
 new_key_type!(pub BlockKey);
 pub type Blocks = SlotMap<BlockKey, Block>;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Line {
     Text {
         text: String,
@@ -92,7 +92,20 @@ impl Line {
             Line::Text { text, .. } => text,
             Line::Node { local_header, .. } => local_header,
         }
-    }    
+    }
+
+    pub fn slice(&self, start: usize, end: usize) -> Line {
+        match *self {
+            Line::Text { ref text, monospace } => Line::Text {
+                text: text[start..end].to_owned(),
+                monospace,
+            },
+            Line::Node { ref local_header, ..} => Line::Text {
+                text: local_header[start..end].to_owned(),
+                monospace: false,
+            },
+        }
+    }
 }
 
 impl Block {

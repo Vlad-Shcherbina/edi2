@@ -16,6 +16,8 @@ use winapi::shared::windef::*;
 use winapi::shared::winerror::*;
 use winapi::shared::dxgiformat::*;
 use winapi::shared::windowsx::*;
+use winapi::um::errhandlingapi::*;
+use winapi::um::winbase::*;
 use winapi::um::winuser::*;
 use winapi::um::dcommon::*;
 use winapi::um::d2d1::*;
@@ -26,7 +28,7 @@ use winapi::um::d2d1::{
     D2D1_POINT_2F,
 };
 
-use wio::wide::ToWide;
+use wio::wide::{ToWide, FromWide};
 use wio::com::ComPtr;
 
 use crate::win_win_reent::Reent;
@@ -253,4 +255,107 @@ pub fn get_wheel_scroll_lines() -> u32 {
             0)};
     assert!(res != 0, "{}", std::io::Error::last_os_error());
     scroll_lines    
+}
+
+pub fn get_clipboard_sequence_number() -> u32 {
+    unsafe { GetClipboardSequenceNumber() }
+}
+
+// Why not just write `p as *mut T2`?
+// Because then when casting from say *mut void to *mut u16,
+// Clippy complains about pointer alignment
+// https://rust-lang.github.io/rust-clippy/master/index.html#cast_ptr_alignment
+fn cast_ptr<T1, T2>(p: *mut T1) -> *mut T2 {
+    assert!(p as usize % std::mem::align_of::<T2>() == 0);
+    p as *mut T2
+}
+
+pub struct ClipboardManager;
+
+impl ClipboardManager {
+    pub fn open(hwnd: HWND) -> Self {
+        let res = unsafe { OpenClipboard(hwnd) };
+        assert!(res != 0, "{}", Error::last_os_error());
+        Self
+    }
+
+    pub fn empty(&mut self, _reent: Reent) {
+        let res = unsafe { EmptyClipboard() };
+        assert!(res != 0, "{}", Error::last_os_error());
+    }
+
+    pub fn set_private(&mut self) {
+        let _res = unsafe { SetClipboardData(CF_PRIVATEFIRST, null_mut()) };
+        // can't just check res.is_null(), because it's null on success too
+        let e = unsafe { GetLastError() };
+        let hr = HRESULT_FROM_WIN32(e);
+        assert_eq!(hr, S_OK, "{}", Error::last_os_error());
+    }
+
+    pub fn has_private(&mut self) -> bool {
+        unsafe {
+            IsClipboardFormatAvailable(CF_PRIVATEFIRST) != 0
+        }
+    }
+
+    pub fn set_text(&mut self, s: &str) {
+        let data = s.to_wide_null();
+        unsafe {
+            let h = GlobalAlloc(GMEM_MOVEABLE, data.len() * 2);
+            assert!(!h.is_null(), "{}", Error::last_os_error());
+
+            let pdata: *mut u16 = cast_ptr(GlobalLock(h));
+            assert!(!pdata.is_null());
+            for (i, c) in data.into_iter().enumerate() {
+                *pdata.add(i) = c;
+            }
+            let res = GlobalUnlock(pdata as *mut _);
+            if res == 0 {
+                let e = Error::last_os_error();
+                assert!(e.raw_os_error() == Some(0), "{}", e);
+            }
+
+            let res = SetClipboardData(CF_UNICODETEXT, h);
+            assert!(!res.is_null(), "{}", Error::last_os_error());
+        }
+    }
+
+    pub fn get_text(&mut self) -> Option<String> {
+        unsafe {
+            let h = GetClipboardData(CF_UNICODETEXT);
+            if h.is_null() {
+                let e = Error::last_os_error();
+                assert!(e.raw_os_error() == Some(0), "{}", e);
+                return None;
+            }
+            let pdata: *mut u16 = cast_ptr(GlobalLock(h));
+            assert!(!pdata.is_null());
+            let mut data = Vec::new();
+            let mut pos = 0;
+            while *pdata.offset(pos) != 0 {
+                data.push(*pdata.offset(pos));
+                pos += 1;
+            }
+            let s = std::ffi::OsString::from_wide(&data);
+            let s = s.into_string().unwrap();
+            let res = GlobalUnlock(pdata as *mut _);
+            if res == 0 {
+                let e = Error::last_os_error();
+                assert!(e.raw_os_error() == Some(0), "{}", e);
+            }
+            Some(s.replace("\r\n", "\n"))
+        }        
+    }
+
+    pub fn close(self) {
+        let res = unsafe { CloseClipboard() };
+        assert!(res != 0, "{}", Error::last_os_error());
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for ClipboardManager {
+    fn drop(&mut self) {
+        panic!("did you forget to .close()?");
+    }
 }
