@@ -904,6 +904,7 @@ impl App {
         for line in line1..=line2 {
             let start_pos = if line == line1 { pos1 } else { 0 };
             let end_pos = if line == line2 { pos2 } else { b.max_pos(line, blocks, nodes) };
+            // TODO: use reuse slice_block_line() here?
             match b.children[line] {
                 BlockChild::Leaf => {
                     let (node, line_idx) = b.node_line_idx(line, blocks).unwrap();
@@ -914,7 +915,7 @@ impl App {
                 BlockChild::Block(_) => {
                     match (start_pos, end_pos) {
                         (0, 0) | (1, 1) => {
-                            lines.push(Line::Text { text: String::new(), monospace: false });
+                            lines.push(Line::new_empty());
                         }
                         (0, 1) => {
                             let line = &nodes[b.node].lines[line - 1].line;
@@ -936,7 +937,132 @@ impl App {
     }
 
     fn paste(&mut self, lines: Vec<Line>) {
-        println!("TODO: Ctrl-V {:#?}", lines);
+        let cur_line_pos = (self.cur.line, self.cur.pos);
+        let sel_line_pos = match self.cur.sel.as_ref() {
+            Some(sel) => (sel.line, sel.pos),
+            None => cur_line_pos,
+        };
+        let (line1, pos1) = cur_line_pos.min(sel_line_pos);
+        let (line2, pos2) = cur_line_pos.max(sel_line_pos);
+
+        // TODO: check that there are no self-references
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+
+        let mut new_lines = vec![Line::new_empty()];
+
+        let mut cur_line_pos = None;
+        assert!(!lines.is_empty());
+        let num_lines = lines.len();
+        for (i, line) in lines.into_iter().enumerate() {
+            if i == 0 {
+                concatenate_with_last_line(
+                    &mut new_lines,
+                    slice_block_line(b, line1, 0, pos1, blocks, nodes));
+            }
+            concatenate_with_last_line(
+                &mut new_lines,
+                line);
+            if i + 1 == num_lines {
+                let new_cur_pos = match new_lines.last().unwrap() {
+                    Line::Text { text, .. } => text.len(),
+                    Line::Node { .. } => 1,
+                };
+                cur_line_pos = Some((line1 + new_lines.len() - 1, new_cur_pos));
+
+                let max_pos = b.max_pos(line2, blocks, nodes);
+                concatenate_with_last_line(
+                    &mut new_lines,
+                    slice_block_line(b, line2, pos2, max_pos, blocks, nodes));
+            } else {
+                new_lines.push(Line::new_empty());
+            }
+        }
+        let cur_line_pos = cur_line_pos.unwrap();
+        self.cur.line = cur_line_pos.0;
+        self.cur.pos = cur_line_pos.1;
+        self.cur.sel = None;
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let line1 = if line1 == 0 {
+            let new_header_text = match new_lines.first().unwrap() {
+                Line::Text { .. } =>
+                    new_lines.remove(0).text().to_owned(),
+                Line::Node { .. } => {
+                    self.cur.line += 1;
+                    String::new()
+                }
+            };
+            let b = &blocks[self.cur.block];
+            let (node_key, node_line) = b.node_line_idx(0, blocks).unwrap();
+            let ll = &mut nodes[node_key].lines[node_line];
+            ll.layout = OnceCell::new();
+            match &mut ll.line {
+                Line::Text { .. } => panic!(),
+                Line::Node { local_header, .. } => {
+                    *local_header = new_header_text;
+                }
+            }
+            line1 + 1
+        } else {
+            line1
+        };
+
+        let node_key = blocks[self.cur.block].node;
+        splice_node_lines(
+            node_key,
+            line1 - 1, line2 + 1 - 1, new_lines,
+            blocks, nodes);
+
+        self.sink_cursor();
+    }
+}
+
+fn slice_block_line(
+    b: &Block, line: usize,
+    start_pos: usize, end_pos: usize,
+    blocks: &Blocks, nodes: &Nodes,
+) -> Line {
+    match b.children[line] {
+        BlockChild::Leaf => {
+            let (node, line_idx) = b.node_line_idx(line, blocks).unwrap();
+            nodes[node].lines[line_idx].line.slice(start_pos, end_pos)
+        },
+        BlockChild::Block(_) => {
+            match (start_pos, end_pos) {
+                (0, 0) | (1, 1) =>
+                    Line::Text { text: String::new(), monospace: false },
+                (0, 1) =>
+                    nodes[b.node].lines[line - 1].line.clone(),
+                other => panic!("{:?}", other),
+            }
+        }
+    }
+}
+
+fn concatenate_with_last_line(lines: &mut Vec<Line>, line: Line) {
+    if line.is_empty() {
+        return;
+    }
+    let mut last = lines.pop().unwrap();
+    if last.is_empty() {
+        lines.push(line);
+        return;
+    }
+    match (&mut last, &line) {
+        (Line::Text { text: text1, .. }, Line::Text { text: text2, .. }) => {
+            text1.push_str(text2);
+            lines.push(last);
+        },
+        _ => {
+            lines.push(last);
+            lines.push(line);
+        }
     }
 }
 

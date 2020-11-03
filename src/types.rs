@@ -80,6 +80,19 @@ pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
 type BlockChildRef = (BlockKey, usize);
 
 impl Line {
+    pub fn new_empty() -> Self {
+        Line::Text {
+            text: String::new(), monospace: false,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Line::Text { text, .. } => text.is_empty(),
+            Line::Node { .. } => false,
+        }
+    }
+
     pub fn text(&self) -> &str {
         match self {
             Line::Text { text, .. } => text,
