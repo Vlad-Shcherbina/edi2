@@ -1008,6 +1008,9 @@ impl App {
                     *local_header = new_header_text;
                 }
             }
+            if self.cur.line > 0 && !blocks[self.cur.block].expanded {
+                expand_block(self.cur.block, blocks, nodes);
+            }
             line1 + 1
         } else {
             line1
