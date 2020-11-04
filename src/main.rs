@@ -945,10 +945,18 @@ impl App {
         let (line1, pos1) = cur_line_pos.min(sel_line_pos);
         let (line2, pos2) = cur_line_pos.max(sel_line_pos);
 
-        // TODO: check that there are no self-references
-
         let blocks = &self.blocks;
         let nodes = &self.nodes;
+
+        let mut p = self.cur.block;
+        while let Some((parent, idx)) = blocks[p].parent_idx {
+            if blocks[parent].node == blocks[self.cur.block].node &&
+               line1 <= idx && idx <= line2 {
+                self.cur.block = parent;
+                return;
+            }
+            p = parent;
+        }
 
         let b = &blocks[self.cur.block];
 
