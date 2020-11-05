@@ -1,4 +1,5 @@
 use once_cell::unsync::OnceCell;
+use fnv::FnvHashSet;
 use crate::text_layout::TextLayout;
 use crate::slotmap::SlotMap;
 
@@ -26,7 +27,7 @@ pub struct LineWithLayout {
 
 pub struct Node {
     pub lines: Vec<LineWithLayout>,
-    pub blocks: Vec<BlockKey>,
+    pub blocks: FnvHashSet<BlockKey>,
 }
 
 pub struct Block {
@@ -55,8 +56,7 @@ pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
         None => assert_eq!(b.depth, 0),
     }
 
-    let cnt = nodes[b.node].blocks.iter().filter(|&&bb| bb == block).count();
-    assert_eq!(cnt, 1);
+    assert!(nodes[b.node].blocks.contains(&block));
 
     match b.children[0] {
         BlockChild::Leaf => {}

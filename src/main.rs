@@ -132,7 +132,8 @@ fn expand_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
                     node: child_node,
                     children: vec![BlockChild::Leaf],
                 });
-                nodes[child_node].blocks.push(child_block);
+                let was_new = nodes[child_node].blocks.insert(child_block);
+                assert!(was_new);
                 blocks[block].children.push(BlockChild::Block(child_block));
             }
         }
@@ -140,16 +141,8 @@ fn expand_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
 }
 
 fn destroy_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
-    let mut cnt = 0;
-    nodes[blocks[block].node].blocks.retain(|&bb| {
-        if bb == block {
-            cnt += 1;
-            false
-        } else {
-            true
-        }
-    });
-    assert_eq!(cnt, 1);
+    let was_there = nodes[blocks[block].node].blocks.remove(&block);
+    assert!(was_there);
 
     let block = blocks.remove(block);
     for child in block.children {
@@ -190,7 +183,7 @@ impl App {
             lines: vec![
                 text_line("ccc", false),
             ],
-            blocks: vec![],
+            blocks: Default::default(),
         });
 
         let node1 = nodes.insert(Node {
@@ -199,7 +192,7 @@ impl App {
                 node_line("node2", node2),
                 text_line("bbb", false),
             ],
-            blocks: vec![],
+            blocks: Default::default(),
         });
         nodes[node2].lines.push(node_line("recursion", node1));
 
@@ -213,7 +206,7 @@ impl App {
                 node_line("zzz", node1),
                 text_line("Stuff.", false),
             ],
-            blocks: vec![],
+            blocks: Default::default(),
         });
         let root_block = blocks.insert(Block {
             depth: 0,
@@ -222,10 +215,10 @@ impl App {
             expanded: false,
             children: vec![BlockChild::Leaf],
         });
-        nodes[root_node].blocks.push(root_block);
+        nodes[root_node].blocks.insert(root_block);
 
         expand_block(root_block, &mut blocks, &mut nodes);
-        expand_block(nodes[node1].blocks[0], &mut blocks, &mut nodes);
+        expand_block(*nodes[node1].blocks.iter().next().unwrap(), &mut blocks, &mut nodes);
 
         let mut app = App {
             ctx,
@@ -717,7 +710,7 @@ impl App {
             let blocks = &mut self.blocks;
             let new_node = nodes.insert(Node {
                 lines: vec![],
-                blocks: vec![],
+                blocks: Default::default(),
             });
             let new_block = blocks.insert(Block {
                 depth: blocks[self.cur.block].depth + 1,
@@ -726,7 +719,8 @@ impl App {
                 children: vec![BlockChild::Leaf],
                 expanded: false,
             });
-            nodes[new_node].blocks.push(new_block);
+            let was_new = nodes[new_node].blocks.insert(new_block);
+            assert!(was_new);
             nodes[node].lines[line_idx] = LineWithLayout {
                 line: Line::Node { local_header, node: new_node },
                 layout: OnceCell::new(),

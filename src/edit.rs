@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use fnv::FnvHashSet;
 use once_cell::unsync::OnceCell;
 use crate::types::*;
 
@@ -31,11 +31,7 @@ pub fn splice_node_lines(
             |line| LineWithLayout { line, layout: OnceCell::new() }));
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
 
-    let mut bs = HashSet::with_capacity(nodes[node].blocks.len());
-    for &block in &nodes[node].blocks {
-        let was_new = bs.insert(block);
-        assert!(was_new);
-    }
+    let mut bs: FnvHashSet<BlockKey> = nodes[node].blocks.clone();
     while let Some(&block) = bs.iter().next() {
         bs.remove(&block);
 
@@ -75,7 +71,8 @@ pub fn splice_node_lines(
                             children: vec![BlockChild::Leaf],
                             expanded: false,
                         });
-                        nodes[node].blocks.push(child_block);
+                        let was_new = nodes[node].blocks.insert(child_block);
+                        assert!(was_new);
                         BlockChild::Block(child_block)
                     }
                 }
