@@ -35,7 +35,6 @@ pub fn splice_node_lines(
     while let Some(&block) = bs.iter().next() {
         bs.remove(&block);
 
-        // TODO: it is possible that this block was destroyed on previous iterations
         let b = &mut blocks[block];
         if !b.expanded {
             continue;
