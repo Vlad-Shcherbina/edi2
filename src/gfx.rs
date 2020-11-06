@@ -260,7 +260,7 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     bottom: yy + BULLET_SIZE,
                 };
                 unsafe {
-                    if !blocks[b].expanded {
+                    if !blocks[b].is_expanded() {
                         self.ctx.render_target.FillRectangle(
                             &rect, self.ctx.text_brush.as_raw());
                     }

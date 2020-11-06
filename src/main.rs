@@ -107,6 +107,7 @@ struct App {
 
     nodes: Nodes,
     blocks: Blocks,
+    cblocks: CBlocks,
 
     y_offset: f32,
     root_block: BlockKey,  // owned key
@@ -115,32 +116,20 @@ struct App {
     clipboard: Option<Clipboard>,
 }
 
-fn expand_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
+fn expand_block(
+    block: BlockKey,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+) {
     let b = &mut blocks[block];
-    assert!(!b.expanded);
-    b.expanded = true;
-    assert_eq!(b.children.len(), 1);
-    let node = b.node;
-    for i in 0..nodes[node].lines.len() {
-        match nodes[node].lines[i].line {
-            Line::Text { .. } => blocks[block].children.push(BlockChild::Leaf),
-            Line::Node { node: child_node, .. } => {
-                let child_block = blocks.insert(Block {
-                    expanded: false,
-                    depth: blocks[block].depth + 1,
-                    parent_idx: Some((block, blocks[block].children.len())),
-                    node: child_node,
-                    children: vec![BlockChild::Leaf],
-                });
-                let was_new = nodes[child_node].blocks.insert(child_block);
-                assert!(was_new);
-                blocks[block].children.push(BlockChild::Block(child_block));
-            }
-        }
-    }
+    assert!(!b.is_expanded());
+    let cforest = b.collapsed.take().unwrap();
+    push_block_children_from_cforest(block, cforest, blocks, cblocks, nodes);
 }
 
-fn destroy_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
+fn destroy_block(
+    block: BlockKey,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+) {
     let was_there = nodes[blocks[block].node].blocks.remove(&block);
     assert!(was_there);
 
@@ -148,9 +137,136 @@ fn destroy_block(block: BlockKey, blocks: &mut Blocks, nodes: &mut Nodes) {
     for child in block.children {
         match child {
             BlockChild::Leaf => {}
-            BlockChild::Block(b) => destroy_block(b, blocks, nodes),
+            BlockChild::Block(b) => destroy_block(b, blocks, cblocks, nodes),
         }
     }
+    if let Some(collapsed) = block.collapsed {
+        for &cb in collapsed.0.values() {
+            destroy_cblock(cb, cblocks, nodes);
+        }
+    }
+}
+
+fn destroy_cblock(cblock: CBlockKey, cblocks: &mut CBlocks, nodes: &mut Nodes) {
+    let was_there = nodes[cblocks[cblock].node].cblocks.remove(&cblock);
+    assert!(was_there);
+
+    let cblock = cblocks.remove(cblock);
+    for &child in cblock.children.0.values() {
+        destroy_cblock(child, cblocks, nodes);
+    }
+}
+
+// return None if resulting cblock .is_trivial()
+fn block_to_cblock(
+    block: BlockKey,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+) -> Option<CBlockKey> {
+    let node = blocks[block].node;
+    let was_there = nodes[node].blocks.remove(&block);
+    assert!(was_there);
+    let block = blocks.remove(block);
+    let cblock = match block.collapsed {
+        Some(children) => {
+            if children.0.is_empty() {
+                return None;
+            }
+            CBlock {
+                node,
+                expanded: false,
+                children,
+            }
+        },
+        None => {
+            let mut children = CForest::new();
+            for (i, child) in block.children.into_iter().enumerate().skip(1) {
+                match child {
+                    BlockChild::Leaf => {},
+                    BlockChild::Block(b) => {
+                        let cb = block_to_cblock(b, blocks, cblocks, nodes);
+                        if let Some(cb) = cb {
+                            children.0.insert(i, cb);
+                        }
+                    }
+                }
+            }
+            CBlock {
+                node,
+                expanded: true,
+                children,
+            }
+        }
+    };
+    let cblock = cblocks.insert(cblock);
+    let was_new = nodes[node].cblocks.insert(cblock);
+    assert!(was_new);
+    Some(cblock)
+}
+
+fn cblock_to_block(
+    parent_idx: (BlockKey, usize),
+    cblock: CBlockKey,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+) -> BlockKey {
+    let node = cblocks[cblock].node;
+    let was_there = nodes[node].cblocks.remove(&cblock);
+    assert!(was_there);
+    let cblock = cblocks.remove(cblock);
+
+    let block = Block {
+        depth: blocks[parent_idx.0].depth + 1,
+        parent_idx: Some(parent_idx),
+        node,
+        children: vec![BlockChild::Leaf],
+        collapsed: None,
+    };
+
+    let block = blocks.insert(block);
+    let was_new = nodes[node].blocks.insert(block);
+    assert!(was_new);
+
+    if cblock.expanded {
+        push_block_children_from_cforest(
+            block, cblock.children,
+            blocks, cblocks, nodes);
+    } else {
+        blocks[block].collapsed = Some(cblock.children);
+    }
+
+    block
+}
+
+fn push_block_children_from_cforest(
+    block: BlockKey,
+    mut cforest: CForest,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+) {
+    let node = blocks[block].node;
+    assert_eq!(blocks[block].children.len(), 1);
+    for i in 0..nodes[node].lines.len() {
+        let child = match nodes[node].lines[i].line {
+            Line::Text {..} => BlockChild::Leaf,
+            Line::Node { node: child_node, .. } => {
+                let child_block = if let Some(cb) = cforest.0.remove(&(i + 1)) {
+                    cblock_to_block((block, i + 1), cb, blocks, cblocks, nodes)
+                } else {
+                    let child_block = blocks.insert(Block {
+                        depth: blocks[block].depth + 1,
+                        parent_idx: Some((block, i + 1)),
+                        node: child_node,
+                        children: vec![BlockChild::Leaf],
+                        collapsed: Some(CForest::new()),
+                    });
+                    let was_new = nodes[child_node].blocks.insert(child_block);
+                    assert!(was_new);
+                    child_block
+                };
+                BlockChild::Block(child_block)
+            }
+        };
+        blocks[block].children.push(child);
+    }
+    assert!(cforest.0.is_empty());
 }
 
 fn text_line(text: &str, monospace: bool) -> LineWithLayout {
@@ -178,12 +294,14 @@ impl App {
 
         let mut nodes = Nodes::new();
         let mut blocks = Blocks::new();
+        let mut cblocks = CBlocks::new();
 
         let node2 = nodes.insert(Node {
             lines: vec![
                 text_line("ccc", false),
             ],
             blocks: Default::default(),
+            cblocks: Default::default(),
         });
 
         let node1 = nodes.insert(Node {
@@ -193,6 +311,7 @@ impl App {
                 text_line("bbb", false),
             ],
             blocks: Default::default(),
+            cblocks: Default::default(),
         });
         nodes[node2].lines.push(node_line("recursion", node1));
 
@@ -207,23 +326,25 @@ impl App {
                 text_line("Stuff.", false),
             ],
             blocks: Default::default(),
+            cblocks: Default::default(),
         });
         let root_block = blocks.insert(Block {
             depth: 0,
             parent_idx: None,
             node: root_node,
-            expanded: false,
+            collapsed: Some(CForest::new()),
             children: vec![BlockChild::Leaf],
         });
         nodes[root_node].blocks.insert(root_block);
 
-        expand_block(root_block, &mut blocks, &mut nodes);
-        expand_block(*nodes[node1].blocks.iter().next().unwrap(), &mut blocks, &mut nodes);
+        expand_block(root_block, &mut blocks, &mut cblocks, &mut nodes);
+        expand_block(*nodes[node1].blocks.iter().next().unwrap(), &mut blocks, &mut cblocks, &mut nodes);
 
         let mut app = App {
             ctx,
             nodes,
             blocks,
+            cblocks,
             cur: Cur {
                 block: root_block,
                 line: 1,
@@ -241,21 +362,45 @@ impl App {
 
     fn check(&self) {
         fn rec_check_block(
-            block: BlockKey, cnt: &mut usize,
-            blocks: &Blocks, nodes: &Nodes,
+            block: BlockKey, cnt: &mut Cnt,
+            blocks: &Blocks, cblocks: &CBlocks, nodes: &Nodes,
         ) {
-            *cnt += 1;
-            check_block(block, blocks, nodes);
+            cnt.block += 1;
+            check_block(block, blocks, cblocks, nodes);
             for child in &blocks[block].children {
                 match *child {
                     BlockChild::Leaf => {}
-                    BlockChild::Block(b) => rec_check_block(b, cnt, blocks, nodes),
+                    BlockChild::Block(b) => rec_check_block(
+                        b, cnt, blocks, cblocks, nodes),
+                }
+            }
+            if let Some(collapsed) = blocks[block].collapsed.as_ref() {
+                for &cb in collapsed.0.values() {
+                    rec_check_cblock(cb, cnt, cblocks, nodes);
                 }
             }
         }
-        let mut cnt = 0;
-        rec_check_block(self.root_block, &mut cnt, &self.blocks, &self.nodes);
-        assert_eq!(self.blocks.len(), cnt);
+        fn rec_check_cblock(
+            cblock: CBlockKey, cnt: &mut Cnt,
+            cblocks: &CBlocks, nodes: &Nodes) {
+            cnt.cblock += 1;
+            check_cblock(cblock, cblocks, nodes);
+            for &cb in cblocks[cblock].children.0.values() {
+                rec_check_cblock(cb, cnt, cblocks, nodes);
+            }
+        }
+        struct Cnt {
+            block: usize,
+            cblock: usize,
+        }
+        let mut cnt = Cnt {
+            block: 0,
+            cblock: 0,
+        };
+        rec_check_block(self.root_block, &mut cnt,
+            &self.blocks, &self.cblocks, &self.nodes);
+        assert_eq!(self.blocks.len(), cnt.block);
+        assert_eq!(self.cblocks.len(), cnt.cblock);
     }
 
     fn scroll(&mut self, delta: f32) {
@@ -283,7 +428,7 @@ impl App {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
-        assert!(blocks[block].expanded);
+        assert!(blocks[block].is_expanded());
         if blocks[block].depth <= blocks[self.cur.block].depth {
             let mut b = self.cur.block;
             while blocks[block].depth < blocks[b].depth {
@@ -318,18 +463,26 @@ impl App {
         }
 
         let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
 
-        let b = &mut blocks[block];
-        b.expanded = false;
+        let mut cforest = CForest::new();
 
-        let children_to_remove: Vec<_> = b.children.drain(1..).collect();
-        for child in children_to_remove {
+        let children_to_remove: Vec<_> = blocks[block].children.drain(1..).collect();
+        for (i, child) in children_to_remove.into_iter().enumerate() {
+            let i = i + 1;
             match child {
                 BlockChild::Leaf => {}
-                BlockChild::Block(bc) => destroy_block(bc, blocks, nodes),
+                BlockChild::Block(bc) => {
+                    let cb = block_to_cblock(bc, blocks, cblocks, nodes);
+                    if let Some(cb) = cb {
+                        cforest.0.insert(i, cb);
+                    }
+                }
             }
         }
+
+        blocks[block].collapsed = Some(cforest);
     }
 
     // If the cursor is on a VisTree::Node boundary and not on a line of text
@@ -711,13 +864,14 @@ impl App {
             let new_node = nodes.insert(Node {
                 lines: vec![],
                 blocks: Default::default(),
+                cblocks: Default::default(),
             });
             let new_block = blocks.insert(Block {
                 depth: blocks[self.cur.block].depth + 1,
                 parent_idx: Some((self.cur.block, self.cur.line)),
                 node: new_node,
                 children: vec![BlockChild::Leaf],
-                expanded: false,
+                collapsed: Some(CForest::new()),
             });
             let was_new = nodes[new_node].blocks.insert(new_block);
             assert!(was_new);
@@ -742,10 +896,11 @@ impl App {
         assert!(self.cur.sel.is_none(), "TODO");
 
         let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
 
-        if self.cur.line == 0 && !blocks[self.cur.block].expanded {
-            expand_block(self.cur.block, blocks, nodes);
+        if self.cur.line == 0 && !blocks[self.cur.block].is_expanded() {
+            expand_block(self.cur.block, blocks, cblocks, nodes);
         }
 
         let b = &blocks[self.cur.block];
@@ -761,7 +916,7 @@ impl App {
         if self.cur.line == 0 {
             splice_node_lines(b.node, 0, 0, 
                 vec![Line::Text { text: tail, monospace: false }],
-                blocks, nodes);
+                blocks, cblocks, nodes);
         } else {
             let monospace = match line.line {
                 Line::Text { monospace, .. } => monospace,
@@ -769,7 +924,7 @@ impl App {
             };
             splice_node_lines(b.node, line_idx + 1, line_idx + 1,
                 vec![Line::Text { text: tail, monospace }],
-                blocks, nodes);
+                blocks, cblocks, nodes);
         }
         self.cur.line += 1;
         self.cur.pos = 0;
@@ -779,6 +934,7 @@ impl App {
         assert!(self.cur.sel.is_none(), "TODO");
 
         let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
 
         let b = &blocks[self.cur.block];
@@ -800,9 +956,9 @@ impl App {
         };
 
         if  blocks[prev_block].depth > b.depth {
-            if prev_idx == 0 && !blocks[prev_block].expanded {
+            if prev_idx == 0 && !blocks[prev_block].is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
-                expand_block(prev_block, blocks, nodes);
+                expand_block(prev_block, blocks, cblocks, nodes);
                 return;
             }
         } else if prev_block != self.cur.block {
@@ -821,9 +977,9 @@ impl App {
                 };
             }
 
-            if !b.expanded {
+            if !b.is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
-                expand_block(self.cur.block, blocks, nodes);
+                expand_block(self.cur.block, blocks, cblocks, nodes);
                 return;
             }
 
@@ -831,7 +987,7 @@ impl App {
                 blocks[self.cur.block].node,
                 0, nodes[blocks[self.cur.block].node].lines.len(),
                 vec![],
-                blocks, nodes);
+                blocks, cblocks, nodes);
 
             assert!(idx_in_parent > 0);
             let parent_node = blocks[parent_block].node;
@@ -847,7 +1003,7 @@ impl App {
                 blocks[parent_block].node,
                 idx_in_parent - 1, idx_in_parent,
                 lines,
-                blocks, nodes);
+                blocks, cblocks, nodes);
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
             self.cur.pos = 0;
@@ -863,7 +1019,9 @@ impl App {
         self.cur.pos = prev_text.len();
         prev_line.layout = OnceCell::new();
         prev_text.push_str(&text);
-        splice_node_lines(node, line_idx, line_idx + 1, vec![], blocks, nodes);
+        splice_node_lines(
+            node, line_idx, line_idx + 1, vec![],
+            blocks, cblocks, nodes);
     }
 
     fn tab(&mut self) {
@@ -871,12 +1029,13 @@ impl App {
             return;  // TODO?
         }
         let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
         if self.cur.line == 0 {
-            if blocks[self.cur.block].expanded {
+            if blocks[self.cur.block].is_expanded() {
                 self.collapse_block(self.cur.block);
             } else {
-                expand_block(self.cur.block, blocks, nodes);
+                expand_block(self.cur.block, blocks, cblocks, nodes);
             }
         }
     }
@@ -989,6 +1148,7 @@ impl App {
         self.cur.sel = None;
 
         let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
 
         let line1 = if line1 == 0 {
@@ -1010,8 +1170,8 @@ impl App {
                     *local_header = new_header_text;
                 }
             }
-            if self.cur.line > 0 && !blocks[self.cur.block].expanded {
-                expand_block(self.cur.block, blocks, nodes);
+            if self.cur.line > 0 && !blocks[self.cur.block].is_expanded() {
+                expand_block(self.cur.block, blocks, cblocks, nodes);
             }
             line1 + 1
         } else {
@@ -1022,7 +1182,7 @@ impl App {
         splice_node_lines(
             node_key,
             line1 - 1, line2 + 1 - 1, new_lines,
-            blocks, nodes);
+            blocks, cblocks, nodes);
 
         self.sink_cursor();
     }
@@ -1185,13 +1345,14 @@ impl WindowProcState for App {
                 }
                 gfx::MouseResult::Toggle { block } => {
                     let blocks = &mut app.blocks;
+                    let cblocks = &mut app.cblocks;
                     let nodes = &mut app.nodes;
-                    if blocks[block].expanded {
+                    if blocks[block].is_expanded() {
                         app.collapse_block(block);
                         app.update_anchor();
                         invalidate_rect(hwnd);
                     } else {
-                        expand_block(block, blocks, nodes);
+                        expand_block(block, blocks, cblocks, nodes);
                         app.update_anchor();
                         invalidate_rect(hwnd);
                     }

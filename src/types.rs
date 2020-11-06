@@ -1,5 +1,5 @@
 use once_cell::unsync::OnceCell;
-use fnv::FnvHashSet;
+use fnv::{FnvHashMap, FnvHashSet};
 use crate::text_layout::TextLayout;
 use crate::slotmap::SlotMap;
 
@@ -7,6 +7,8 @@ new_key_type!(pub NodeKey);
 pub type Nodes = SlotMap<NodeKey, Node>;
 new_key_type!(pub BlockKey);
 pub type Blocks = SlotMap<BlockKey, Block>;
+new_key_type!(pub CBlockKey);
+pub type CBlocks = SlotMap<CBlockKey, CBlock>;
 
 #[derive(Debug, Clone)]
 pub enum Line {
@@ -25,9 +27,18 @@ pub struct LineWithLayout {
     pub layout: OnceCell<TextLayout>,
 }
 
+impl std::fmt::Debug for LineWithLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LineWithLayout")
+            .field("line", &self.line)
+            .finish()
+    }
+}
+
 pub struct Node {
     pub lines: Vec<LineWithLayout>,
     pub blocks: FnvHashSet<BlockKey>,
+    pub cblocks: FnvHashSet<CBlockKey>,
 }
 
 pub struct Block {
@@ -35,7 +46,7 @@ pub struct Block {
     pub parent_idx: Option<(BlockKey, usize)>,
     pub node: NodeKey,
     pub children: Vec<BlockChild>,
-    pub expanded: bool,
+    pub collapsed: Option<CForest>,  // None if expanded
 }
 
 pub enum BlockChild {
@@ -43,7 +54,65 @@ pub enum BlockChild {
     Leaf,
 }
 
-pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
+// collapsed forest
+// - line numbers start at 1 (same as block children numbers)
+// - elems that are .is_trivial() are omitted
+pub struct CForest(pub FnvHashMap<usize, CBlockKey>);
+
+// collapsed block
+pub struct CBlock {
+    pub node: NodeKey,
+    pub expanded: bool,
+    pub children: CForest,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CBlockParent {
+    Block(BlockKey),
+    CBlock(CBlockKey),
+}
+
+impl CForest {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        CForest(FnvHashMap::default())
+    }
+
+    pub fn check(&self, node: &Node, cblocks: &CBlocks) {
+        for &v in self.0.values() {
+            assert!(!cblocks[v].is_trivial());
+        }
+        for (i, line) in node.lines.iter().enumerate() {
+            match line.line {
+                Line::Text {..} => assert!(!self.0.contains_key(&(i + 1))),
+                Line::Node { node, ..} => {
+                    if let Some(&child_cblock) = self.0.get(&(i + 1)) {
+                        assert_eq!(cblocks[child_cblock].node, node);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl CBlock {
+    pub fn is_trivial(&self) -> bool {
+        !self.expanded && self.children.0.is_empty()
+    }
+}
+
+pub fn check_cblock(
+    cblock: CBlockKey,
+    cblocks: &CBlocks, nodes: &Nodes,
+) {
+    let cb = &cblocks[cblock];
+    cb.children.check(&nodes[cb.node], cblocks);
+}
+
+pub fn check_block(
+    block: BlockKey,
+    blocks: &Blocks, cblocks: &CBlocks, nodes: &Nodes,
+) {
     let b = &blocks[block];
     match b.parent_idx {
         Some((parent, idx)) => {
@@ -62,7 +131,7 @@ pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
         BlockChild::Leaf => {}
         _ => panic!(),
     }    
-    if b.expanded {
+    if b.is_expanded() {
         assert_eq!(b.children.len(), 1 + nodes[b.node].lines.len());
         for (child, line) in b.children[1..].iter().zip(&nodes[b.node].lines) {
             match (child, &line.line) {
@@ -74,6 +143,7 @@ pub fn check_block(block: BlockKey, blocks: &Blocks, nodes: &Nodes) {
         }
     } else {
         assert_eq!(b.children.len(), 1);
+        b.collapsed.as_ref().unwrap().check(&nodes[b.node], cblocks);
     }
 }
 
@@ -122,6 +192,10 @@ impl Line {
 }
 
 impl Block {
+    pub fn is_expanded(&self) -> bool {
+        self.collapsed.is_none()
+    }
+
     pub fn node_line_idx(&self, idx: usize, blocks: &Blocks) -> Option<(NodeKey, usize)> {
         match self.children[idx] {
             BlockChild::Leaf =>

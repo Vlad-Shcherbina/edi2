@@ -4,15 +4,32 @@ use crate::types::*;
 
 fn for_each_block_descendant(
     block: BlockKey,
-    blocks: &Blocks,
+    blocks: &Blocks, cblocks: &CBlocks,
     f: &mut impl FnMut(BlockKey),
+    cf: &mut impl FnMut(CBlockKey),
 ) {
     f(block);
     for child in &blocks[block].children {
         match *child {
             BlockChild::Leaf => {}
-            BlockChild::Block(b) => for_each_block_descendant(b, blocks, f),
+            BlockChild::Block(b) => for_each_block_descendant(b, blocks, cblocks, f, cf),
         }
+    }
+    if let Some(collapsed) = blocks[block].collapsed.as_ref() {
+        for &child in collapsed.0.values() {
+            for_each_cblock_descendant(child, cblocks, cf);
+        }
+    }
+}
+
+fn for_each_cblock_descendant(
+    cblock: CBlockKey,
+    cblocks: &CBlocks,
+    cf: &mut impl FnMut(CBlockKey),
+) {
+    cf(cblock);
+    for &child in cblocks[cblock].children.0.values() {
+        for_each_cblock_descendant(child, cblocks, cf);
     }
 }
 
@@ -21,7 +38,7 @@ pub fn splice_node_lines(
     start_line: usize,
     end_line: usize,
     lines: Vec<Line>,
-    blocks: &mut Blocks, nodes: &mut Nodes,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
 ) -> Vec<Line> {
     let num_old_lines = end_line - start_line;
     let num_new_lines = lines.len();
@@ -32,14 +49,26 @@ pub fn splice_node_lines(
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
 
     let mut bs: FnvHashSet<BlockKey> = nodes[node].blocks.clone();
+    let mut cbs: FnvHashSet<CBlockKey> = nodes[node].cblocks.clone();
     while let Some(&block) = bs.iter().next() {
         bs.remove(&block);
 
-        let b = &mut blocks[block];
-        if !b.expanded {
+        if let Some(collapsed) = blocks[block].collapsed.as_mut() {
+            let old_children = splice_cforest(
+                collapsed,
+                start_line + 1, end_line + 1, num_new_lines);
+            for old_child in old_children {
+                for_each_cblock_descendant(old_child, cblocks,
+                    &mut |cb| { cbs.remove(&cb); },
+                );
+                crate::destroy_cblock(old_child, cblocks, nodes);
+            }
+
+            assert_eq!(blocks[block].children.len(), 1);
             continue;
         }
-        let depth = b.depth;
+
+        let depth = blocks[block].depth;
 
         let mut children = std::mem::replace(&mut blocks[block].children, vec![]);
         for child in &children[end_line + 1..] {
@@ -68,7 +97,7 @@ pub fn splice_node_lines(
                             node,
                             parent_idx: Some((block, start_line + 1 + i)),
                             children: vec![BlockChild::Leaf],
-                            expanded: false,
+                            collapsed: Some(CForest::new()),
                         });
                         let was_new = nodes[node].blocks.insert(child_block);
                         assert!(was_new);
@@ -84,10 +113,11 @@ pub fn splice_node_lines(
             match old_child {
                 BlockChild::Leaf => {},
                 BlockChild::Block(bb) => {
-                    for_each_block_descendant(bb, blocks, &mut |b| {
-                        bs.remove(&b);
-                    });
-                    crate::destroy_block(bb, blocks, nodes);
+                    for_each_block_descendant(bb, blocks, cblocks,
+                        &mut |b| { bs.remove(&b); },
+                        &mut |cb| { cbs.remove(&cb); },
+                    );
+                    crate::destroy_block(bb, blocks, cblocks, nodes);
                 }
             }
         }
@@ -95,5 +125,37 @@ pub fn splice_node_lines(
         blocks[block].children = children;
     }
 
+    while let Some(&cblock) = cbs.iter().next() {
+        cbs.remove(&cblock);
+        let old_children = splice_cforest(
+            &mut cblocks[cblock].children,
+            start_line + 1, end_line + 1, num_new_lines);
+        for old_child in old_children {
+            for_each_cblock_descendant(old_child, cblocks,
+                &mut |cb| { cbs.remove(&cb); },
+            );
+            crate::destroy_cblock(old_child, cblocks, nodes);
+        }
+    }
+
     old_lines
+}
+
+fn splice_cforest(
+    cforest: &mut CForest, start_line: usize, end_line: usize, num_new_lines: usize,
+) -> Vec<CBlockKey> {
+    let mut result = vec![];
+    cforest.0 = cforest.0.drain().filter_map(|(i, cb)| {
+        if i < start_line {
+            Some((i, cb))
+        } else if i < end_line {
+            result.push(cb);
+            None
+        } else {
+            let i = i - (end_line - start_line);
+            let i = i + num_new_lines;
+            Some((i, cb))
+        }
+    }).collect();
+    result
 }
