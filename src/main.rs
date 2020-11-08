@@ -1,6 +1,7 @@
 #![feature(bindings_after_at)]
 #![feature(untagged_unions)]
 #![allow(clippy::many_single_char_names)]
+#![allow(clippy::too_many_arguments)]
 
 #[macro_use] pub mod slotmap;
 mod win_util;
@@ -108,6 +109,8 @@ struct App {
     nodes: Nodes,
     blocks: Blocks,
     cblocks: CBlocks,
+
+    undo_buf: Vec<Edit>,
 
     y_offset: f32,
     root_block: BlockKey,  // owned key
@@ -345,6 +348,7 @@ impl App {
             nodes,
             blocks,
             cblocks,
+            undo_buf: vec![],
             cur: Cur {
                 block: root_block,
                 line: 1,
@@ -916,7 +920,8 @@ impl App {
         if self.cur.line == 0 {
             splice_node_lines(b.node, 0, 0, 
                 vec![Line::Text { text: tail, monospace: false }],
-                blocks, cblocks, nodes);
+                blocks, cblocks, nodes,
+                &mut self.undo_buf);
         } else {
             let monospace = match line.line {
                 Line::Text { monospace, .. } => monospace,
@@ -924,7 +929,8 @@ impl App {
             };
             splice_node_lines(b.node, line_idx + 1, line_idx + 1,
                 vec![Line::Text { text: tail, monospace }],
-                blocks, cblocks, nodes);
+                blocks, cblocks, nodes,
+                &mut self.undo_buf);
         }
         self.cur.line += 1;
         self.cur.pos = 0;
@@ -987,7 +993,8 @@ impl App {
                 blocks[self.cur.block].node,
                 0, nodes[blocks[self.cur.block].node].lines.len(),
                 vec![],
-                blocks, cblocks, nodes);
+                blocks, cblocks, nodes,
+                &mut self.undo_buf);
 
             assert!(idx_in_parent > 0);
             let parent_node = blocks[parent_block].node;
@@ -1003,7 +1010,8 @@ impl App {
                 blocks[parent_block].node,
                 idx_in_parent - 1, idx_in_parent,
                 lines,
-                blocks, cblocks, nodes);
+                blocks, cblocks, nodes,
+                &mut self.undo_buf);
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
             self.cur.pos = 0;
@@ -1021,7 +1029,8 @@ impl App {
         prev_text.push_str(&text);
         splice_node_lines(
             node, line_idx, line_idx + 1, vec![],
-            blocks, cblocks, nodes);
+            blocks, cblocks, nodes,
+            &mut self.undo_buf);
     }
 
     fn tab(&mut self) {
@@ -1182,7 +1191,8 @@ impl App {
         splice_node_lines(
             node_key,
             line1 - 1, line2 + 1 - 1, new_lines,
-            blocks, cblocks, nodes);
+            blocks, cblocks, nodes,
+            &mut self.undo_buf);
 
         self.sink_cursor();
     }

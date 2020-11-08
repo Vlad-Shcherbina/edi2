@@ -2,6 +2,15 @@ use fnv::FnvHashSet;
 use once_cell::unsync::OnceCell;
 use crate::types::*;
 
+pub enum Edit {
+    SpliceNodeLines {
+        node: NodeKey,
+        start_line: usize,
+        end_line: usize,
+        lines: Vec<Line>,
+    }
+}
+
 fn for_each_block_descendant(
     block: BlockKey,
     blocks: &Blocks, cblocks: &CBlocks,
@@ -39,6 +48,7 @@ pub fn splice_node_lines(
     end_line: usize,
     lines: Vec<Line>,
     blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+    undo_buf: &mut Vec<Edit>,
 ) -> Vec<Line> {
     let num_old_lines = end_line - start_line;
     let num_new_lines = lines.len();
@@ -47,6 +57,13 @@ pub fn splice_node_lines(
         lines.into_iter().map(
             |line| LineWithLayout { line, layout: OnceCell::new() }));
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
+
+    undo_buf.push(Edit::SpliceNodeLines {
+        node,
+        start_line,
+        end_line: end_line - num_old_lines + num_new_lines,
+        lines: old_lines.clone(),
+    });
 
     let mut bs: FnvHashSet<BlockKey> = nodes[node].blocks.clone();
     let mut cbs: FnvHashSet<CBlockKey> = nodes[node].cblocks.clone();
