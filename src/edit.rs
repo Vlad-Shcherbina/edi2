@@ -3,12 +3,44 @@ use once_cell::unsync::OnceCell;
 use crate::types::*;
 
 pub enum Edit {
+    SpliceLineText {
+        node: NodeKey,
+        line_idx: usize,
+        start_pos: usize,
+        end_pos: usize,
+        substring: String,
+    },
     SpliceNodeLines {
         node: NodeKey,
         start_line: usize,
         end_line: usize,
         lines: Vec<Line>,
     }
+}
+
+pub fn splice_line_text(
+    node: NodeKey, line_idx: usize,
+    start_pos: usize, end_pos: usize,
+    substring: &str,
+    nodes: &mut Nodes,
+    undo_buf: &mut Vec<Edit>,
+) -> String {
+    let line = &mut nodes[node].lines[line_idx];
+    let text = line.line.text_mut();
+
+    let old_substring = text[start_pos..end_pos].to_owned();
+    text.replace_range(start_pos..end_pos, substring);
+    line.layout = OnceCell::new();
+
+    undo_buf.push(Edit::SpliceLineText {
+        node,
+        line_idx,
+        start_pos,
+        end_pos: start_pos + substring.len(),
+        substring: old_substring.clone(),
+    });
+
+    old_substring
 }
 
 fn for_each_block_descendant(
@@ -61,7 +93,7 @@ pub fn splice_node_lines(
     undo_buf.push(Edit::SpliceNodeLines {
         node,
         start_line,
-        end_line: end_line - num_old_lines + num_new_lines,
+        end_line: start_line + num_new_lines,
         lines: old_lines.clone(),
     });
 

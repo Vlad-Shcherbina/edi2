@@ -859,8 +859,7 @@ impl App {
         let nodes = &mut self.nodes;
 
         let (node, line_idx) = blocks[self.cur.block].node_line_idx(self.cur.line, blocks).unwrap();
-        let line = &mut nodes[node].lines[line_idx];
-        let text = line.line.text_mut();
+        let text = nodes[node].lines[line_idx].line.text();
 
         if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with('*') {
             let local_header = text[1..].to_owned();
@@ -886,10 +885,12 @@ impl App {
             return;
         }
 
-        text.insert(self.cur.pos, c);
+        splice_line_text(
+            node,
+            line_idx, self.cur.pos, self.cur.pos,
+            &c.to_string(),
+            nodes, &mut self.undo_buf);
         self.cur.pos += c.len_utf8();
-
-        line.layout = OnceCell::new();
     }
 
     fn enter(&mut self) {
@@ -905,13 +906,13 @@ impl App {
 
         let b = &blocks[self.cur.block];
         let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
-        let node = &mut nodes[node];
-        let line = &mut node.lines[line_idx];
-        let text = line.line.text_mut();
+        let end_pos = nodes[node].lines[line_idx].line.text().len();
 
-        let tail = text[self.cur.pos..].to_owned();
-        text.truncate(self.cur.pos);
-        line.layout = OnceCell::new();
+        let tail = splice_line_text(
+            node, line_idx,
+            self.cur.pos, end_pos,
+            "",
+            nodes, &mut self.undo_buf);
 
         if self.cur.line == 0 {
             splice_node_lines(b.node, 0, 0, 
@@ -919,7 +920,7 @@ impl App {
                 blocks, cblocks, nodes,
                 &mut self.undo_buf);
         } else {
-            let monospace = match line.line {
+            let monospace = match nodes[node].lines[line_idx].line {
                 Line::Text { monospace, .. } => monospace,
                 Line::Node { .. } => panic!(),
             };
@@ -941,12 +942,12 @@ impl App {
 
         let b = &blocks[self.cur.block];
         let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
-        let line = &mut nodes[node].lines[line_idx];
-        let text = line.line.text_mut();
+        let text = nodes[node].lines[line_idx].line.text();
 
         if let Some(prev_pos) = prev_char_pos(text, self.cur.pos) {
-            text.remove(prev_pos);
-            line.layout = OnceCell::new();
+            splice_line_text(node, line_idx,
+                prev_pos, self.cur.pos, "",
+                nodes, &mut self.undo_buf);
             self.cur.pos = prev_pos;
             return;
         }
@@ -1016,13 +1017,15 @@ impl App {
 
         let text = text.to_owned();
         let (prev_node, prev_line_idx) = blocks[prev_block].node_line_idx(prev_idx, blocks).unwrap();
-        let prev_line = &mut nodes[prev_node].lines[prev_line_idx];
-        let prev_text = prev_line.line.text_mut();
+
+        let prev_text_len = nodes[prev_node].lines[prev_line_idx].line.text().len();
+        splice_line_text(prev_node, prev_line_idx,
+            prev_text_len, prev_text_len, &text,
+            nodes, &mut self.undo_buf);
+
         self.cur.block = prev_block;
         self.cur.line = prev_idx;
-        self.cur.pos = prev_text.len();
-        prev_line.layout = OnceCell::new();
-        prev_text.push_str(&text);
+        self.cur.pos = prev_text_len;
         splice_node_lines(
             node, line_idx, line_idx + 1, vec![],
             blocks, cblocks, nodes,
@@ -1167,14 +1170,13 @@ impl App {
             };
             let b = &blocks[self.cur.block];
             let (node_key, node_line) = b.node_line_idx(0, blocks).unwrap();
-            let ll = &mut nodes[node_key].lines[node_line];
-            ll.layout = OnceCell::new();
-            match &mut ll.line {
-                Line::Text { .. } => panic!(),
-                Line::Node { local_header, .. } => {
-                    *local_header = new_header_text;
-                }
-            }
+            let header_len = match nodes[node_key].lines[node_line].line {
+                Line::Text {..} => panic!(),
+                Line::Node { ref local_header, .. } => local_header.len(),
+            };
+            splice_line_text(node_key, node_line,
+                0, header_len, &new_header_text,
+                nodes, &mut self.undo_buf);
             if self.cur.line > 0 && !blocks[self.cur.block].is_expanded() {
                 expand_block(self.cur.block, blocks, cblocks, nodes);
             }
