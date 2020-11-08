@@ -111,6 +111,7 @@ struct App {
     cblocks: CBlocks,
 
     undo_buf: Vec<Edit>,
+    redo_buf: Vec<Edit>,
 
     y_offset: f32,
     root_block: BlockKey,  // owned key
@@ -349,6 +350,7 @@ impl App {
             blocks,
             cblocks,
             undo_buf: vec![],
+            redo_buf: vec![],
             cur: Cur {
                 block: root_block,
                 line: 1,
@@ -1194,6 +1196,32 @@ impl App {
 
         self.sink_cursor();
     }
+
+    fn undo(&mut self) {
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+        while let Some(edit) = self.undo_buf.pop() {
+            apply_edit(edit, blocks, cblocks, nodes, &mut self.redo_buf);
+        }
+        self.cur.block = self.root_block;
+        self.cur.line = 1;
+        self.cur.pos = 0;
+        self.cur.sel = None;
+    }
+
+    fn redo(&mut self) {
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+        while let Some(edit) = self.redo_buf.pop() {
+            apply_edit(edit, blocks, cblocks, nodes, &mut self.undo_buf);
+        }
+        self.cur.block = self.root_block;
+        self.cur.line = 1;
+        self.cur.pos = 0;
+        self.cur.sel = None;
+    }
 }
 
 fn slice_block_line(
@@ -1437,6 +1465,14 @@ impl WindowProcState for App {
                     app.paste(lines);
                 }
                 return None;
+            }
+            if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
+                app.undo();
+                app.update_anchor();
+            }
+            if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
+                app.redo();
+                app.update_anchor();
             }
             invalidate_rect(hwnd);
         }

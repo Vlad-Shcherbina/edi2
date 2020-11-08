@@ -18,6 +18,34 @@ pub enum Edit {
     }
 }
 
+pub fn apply_edit(e: Edit,
+    blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+    undo_buf: &mut Vec<Edit>,
+) {
+    match e {
+        Edit::SpliceLineText {
+            node, line_idx,
+            start_pos, end_pos,
+            substring,
+        } => {
+            splice_line_text(
+                node, line_idx,
+                start_pos, end_pos,
+                &substring,
+                nodes, undo_buf);
+        }
+        Edit::SpliceNodeLines {
+            node,
+            start_line, end_line,
+            lines,
+        } => {
+            splice_node_lines(
+                node, start_line, end_line, lines,
+                blocks, cblocks, nodes, undo_buf);
+        }
+    }
+}
+
 pub fn splice_line_text(
     node: NodeKey, line_idx: usize,
     start_pos: usize, end_pos: usize,
