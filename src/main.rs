@@ -870,20 +870,16 @@ impl App {
                 blocks: Default::default(),
                 cblocks: Default::default(),
             });
-            let new_block = blocks.insert(Block {
-                depth: blocks[self.cur.block].depth + 1,
-                parent_idx: Some((self.cur.block, self.cur.line)),
-                node: new_node,
-                children: vec![BlockChild::Leaf],
-                collapsed: Some(CForest::new()),
-            });
-            let was_new = nodes[new_node].blocks.insert(new_block);
-            assert!(was_new);
-            nodes[node].lines[line_idx] = LineWithLayout {
-                line: Line::Node { local_header, node: new_node },
-                layout: OnceCell::new(),
+            splice_node_lines(
+                node, line_idx, line_idx + 1,
+                vec![Line::Node { local_header, node: new_node }],
+                blocks, &mut self.cblocks, nodes,
+                &mut self.undo_buf);
+            let new_block = match blocks[self.cur.block].children[self.cur.line] {
+                BlockChild::Leaf => unreachable!(),
+                BlockChild::Block(b) => b,
             };
-            blocks[self.cur.block].children[self.cur.line] = BlockChild::Block(new_block);
+            assert_eq!(blocks[new_block].node, new_node);
             self.cur.block = new_block;
             self.cur.line = 0;
             self.cur.pos = 0;
