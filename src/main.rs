@@ -1297,209 +1297,212 @@ impl WindowProcState for App {
         mut sr: StateRef<Self>,
         hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM,
     )-> Option<LRESULT> {
-        if msg == WM_DESTROY {
-            eprintln!("{}", win_msg_name(msg));
-            unsafe {
-                PostQuitMessage(0);
-            }
-        }
-        if msg == WM_SIZE {
-            println!("{}", win_msg_name(msg));
-            let render_size = D2D_SIZE_U {
-                width: GET_X_LPARAM(lparam) as u32,
-                height: GET_Y_LPARAM(lparam) as u32,
-            };
-            let hr = unsafe {
-                sr.state_mut().ctx.render_target.Resize(&render_size)
-            };
-            assert!(hr == S_OK, "0x{:x}", hr);
-        }        
-        if msg == WM_PAINT {
-            eprintln!("{}", win_msg_name(msg));
-            paint(&mut *sr.state_mut());
-        }
-        if msg == WM_MOUSEWHEEL {
-            let delta = GET_WHEEL_DELTA_WPARAM(wparam);
-            println!("{} {}", win_msg_name(msg), delta);
-            let delta = f32::from(delta) / 120.0 * get_wheel_scroll_lines() as f32;
-            sr.state_mut().scroll(delta);
-            invalidate_rect(hwnd);
-        }
-        if msg == WM_MOUSEMOVE {
-            let x = GET_X_LPARAM(lparam);
-            let y = GET_Y_LPARAM(lparam);
-            // println!("{} {} {}", win_msg_name(msg), x, y);
-            let app = sr.state_mut();
-            let mut v = gfx::MouseClickVisitor {
-                x: x as f32,
-                y: y as f32,
-                ctx: &app.ctx,
-                result: gfx::MouseResult::Nothing,
-            };
-            let mut yy = app.y_offset;
-            gfx::accept_block(
-                app.root_block, &mut v, &mut yy,
-                &app.ctx,
-                &app.blocks, &app.nodes);
-            let cur = match v.result {
-                gfx::MouseResult::Nothing => app.ctx.arrow_cursor,
-                gfx::MouseResult::Cur { .. } => app.ctx.beam_cursor,
-                gfx::MouseResult::Toggle { .. } => app.ctx.hand_cursor,
-            };
-            unsafe {
-                SetCursor(cur);
-            }
-        }
-        if msg == WM_LBUTTONDOWN {
-            let x = GET_X_LPARAM(lparam);
-            let y = GET_Y_LPARAM(lparam);
-            println!("{} {} {}", win_msg_name(msg), x, y);
-            let app = &mut *sr.state_mut();
-            let mut v = gfx::MouseClickVisitor {
-                x: x as f32,
-                y: y as f32,
-                ctx: &app.ctx,
-                result: gfx::MouseResult::Nothing,
-            };
-            let mut yy = app.y_offset;
-            gfx::accept_block(
-                app.root_block, &mut v, &mut yy,
-                &app.ctx,
-                &app.blocks, &app.nodes);
-            match v.result {
-                gfx::MouseResult::Nothing => {}
-                gfx::MouseResult::Cur { block, line, pos } => {
-                    app.cur = Cur {
-                        block,
-                        line,
-                        pos,
-                        anchor_x: 0.0,
-                        sel: None,
-                    };
-                    app.update_anchor();
-                    invalidate_rect(hwnd);
+        match msg {
+            WM_DESTROY => {
+                eprintln!("{}", win_msg_name(msg));
+                unsafe {
+                    PostQuitMessage(0);
                 }
-                gfx::MouseResult::Toggle { block } => {
-                    let blocks = &mut app.blocks;
-                    let cblocks = &mut app.cblocks;
-                    let nodes = &mut app.nodes;
-                    if blocks[block].is_expanded() {
-                        app.collapse_block(block);
-                        app.update_anchor();
-                        invalidate_rect(hwnd);
-                    } else {
-                        expand_block(block, blocks, cblocks, nodes);
+            }
+            WM_SIZE => {
+                println!("{}", win_msg_name(msg));
+                let render_size = D2D_SIZE_U {
+                    width: GET_X_LPARAM(lparam) as u32,
+                    height: GET_Y_LPARAM(lparam) as u32,
+                };
+                let hr = unsafe {
+                    sr.state_mut().ctx.render_target.Resize(&render_size)
+                };
+                assert!(hr == S_OK, "0x{:x}", hr);
+            }        
+            WM_PAINT => {
+                eprintln!("{}", win_msg_name(msg));
+                paint(&mut *sr.state_mut());
+            }
+            WM_MOUSEWHEEL => {
+                let delta = GET_WHEEL_DELTA_WPARAM(wparam);
+                println!("{} {}", win_msg_name(msg), delta);
+                let delta = f32::from(delta) / 120.0 * get_wheel_scroll_lines() as f32;
+                sr.state_mut().scroll(delta);
+                invalidate_rect(hwnd);
+            }
+            WM_MOUSEMOVE => {
+                let x = GET_X_LPARAM(lparam);
+                let y = GET_Y_LPARAM(lparam);
+                // println!("{} {} {}", win_msg_name(msg), x, y);
+                let app = sr.state_mut();
+                let mut v = gfx::MouseClickVisitor {
+                    x: x as f32,
+                    y: y as f32,
+                    ctx: &app.ctx,
+                    result: gfx::MouseResult::Nothing,
+                };
+                let mut yy = app.y_offset;
+                gfx::accept_block(
+                    app.root_block, &mut v, &mut yy,
+                    &app.ctx,
+                    &app.blocks, &app.nodes);
+                let cur = match v.result {
+                    gfx::MouseResult::Nothing => app.ctx.arrow_cursor,
+                    gfx::MouseResult::Cur { .. } => app.ctx.beam_cursor,
+                    gfx::MouseResult::Toggle { .. } => app.ctx.hand_cursor,
+                };
+                unsafe {
+                    SetCursor(cur);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                let x = GET_X_LPARAM(lparam);
+                let y = GET_Y_LPARAM(lparam);
+                println!("{} {} {}", win_msg_name(msg), x, y);
+                let app = &mut *sr.state_mut();
+                let mut v = gfx::MouseClickVisitor {
+                    x: x as f32,
+                    y: y as f32,
+                    ctx: &app.ctx,
+                    result: gfx::MouseResult::Nothing,
+                };
+                let mut yy = app.y_offset;
+                gfx::accept_block(
+                    app.root_block, &mut v, &mut yy,
+                    &app.ctx,
+                    &app.blocks, &app.nodes);
+                match v.result {
+                    gfx::MouseResult::Nothing => {}
+                    gfx::MouseResult::Cur { block, line, pos } => {
+                        app.cur = Cur {
+                            block,
+                            line,
+                            pos,
+                            anchor_x: 0.0,
+                            sel: None,
+                        };
                         app.update_anchor();
                         invalidate_rect(hwnd);
                     }
+                    gfx::MouseResult::Toggle { block } => {
+                        let blocks = &mut app.blocks;
+                        let cblocks = &mut app.cblocks;
+                        let nodes = &mut app.nodes;
+                        if blocks[block].is_expanded() {
+                            app.collapse_block(block);
+                            app.update_anchor();
+                            invalidate_rect(hwnd);
+                        } else {
+                            expand_block(block, blocks, cblocks, nodes);
+                            app.update_anchor();
+                            invalidate_rect(hwnd);
+                        }
+                    }
                 }
             }
-        }
-        if msg == WM_KEYDOWN {
-            let key_code = wparam as i32;
-            let scan_code = ((lparam >> 16) & 511) as i32;
-            let ctrl_pressed = unsafe { GetKeyState(VK_CONTROL) } as u16 & 0x8000 != 0;
-            let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
-            println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
-
-            let mut app = sr.state_mut();
-            if key_code == VK_LEFT {
-                if shift_pressed {
-                    app.shift_left();
-                } else {
-                    app.left();
-                }
-                app.update_anchor();
-            }
-            if key_code == VK_RIGHT {
-                if shift_pressed {
-                    app.shift_right();
-                } else {
-                    app.right();
-                }
-                app.update_anchor();
-            }
-            if key_code == VK_UP {
-                app.up();
-            }
-            if key_code == VK_DOWN {
-                app.down();
-            }
-            if key_code == VK_BACK {
-                app.backspace();
-                app.update_anchor();
-            }
-            if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
-                let (lines, plain_text) = app.copy();
-                drop(app);
-                let mut cm = ClipboardManager::open(hwnd);
-                cm.empty(sr.reent());
-                cm.set_private();
-                cm.set_text(&plain_text);
-                cm.close();
-                let mut app = sr.state_mut();
-                app.clipboard = Some(Clipboard {
-                    sequence_number: get_clipboard_sequence_number(),
-                    lines,
-                });
-                return None;
-            }
-            if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
-                drop(app);
-
-                let mut cm = ClipboardManager::open(hwnd);
-                let has_private = cm.has_private();
-                let plain_text = if has_private { None } else { cm.get_text() };
-                cm.close();
+            WM_KEYDOWN => {
+                let key_code = wparam as i32;
+                let scan_code = ((lparam >> 16) & 511) as i32;
+                let ctrl_pressed = unsafe { GetKeyState(VK_CONTROL) } as u16 & 0x8000 != 0;
+                let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
+                println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
 
                 let mut app = sr.state_mut();
-                if has_private {
-                    let clipboard = app.clipboard.as_ref().unwrap(); 
-                    assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
-                    let lines = clipboard.lines.clone();
-                    app.paste(lines);
-                } else if let Some(plain_text) = plain_text {
-                    let lines: Vec<Line> = plain_text.split('\n')
-                        .map(|s| Line::Text { text: s.to_owned(), monospace: false })
-                        .collect();
-                    app.paste(lines);
+                if key_code == VK_LEFT {
+                    if shift_pressed {
+                        app.shift_left();
+                    } else {
+                        app.left();
+                    }
+                    app.update_anchor();
                 }
-                return None;
+                if key_code == VK_RIGHT {
+                    if shift_pressed {
+                        app.shift_right();
+                    } else {
+                        app.right();
+                    }
+                    app.update_anchor();
+                }
+                if key_code == VK_UP {
+                    app.up();
+                }
+                if key_code == VK_DOWN {
+                    app.down();
+                }
+                if key_code == VK_BACK {
+                    app.backspace();
+                    app.update_anchor();
+                }
+                if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
+                    let (lines, plain_text) = app.copy();
+                    drop(app);
+                    let mut cm = ClipboardManager::open(hwnd);
+                    cm.empty(sr.reent());
+                    cm.set_private();
+                    cm.set_text(&plain_text);
+                    cm.close();
+                    let mut app = sr.state_mut();
+                    app.clipboard = Some(Clipboard {
+                        sequence_number: get_clipboard_sequence_number(),
+                        lines,
+                    });
+                    return None;
+                }
+                if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
+                    drop(app);
+
+                    let mut cm = ClipboardManager::open(hwnd);
+                    let has_private = cm.has_private();
+                    let plain_text = if has_private { None } else { cm.get_text() };
+                    cm.close();
+
+                    let mut app = sr.state_mut();
+                    if has_private {
+                        let clipboard = app.clipboard.as_ref().unwrap(); 
+                        assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
+                        let lines = clipboard.lines.clone();
+                        app.paste(lines);
+                    } else if let Some(plain_text) = plain_text {
+                        let lines: Vec<Line> = plain_text.split('\n')
+                            .map(|s| Line::Text { text: s.to_owned(), monospace: false })
+                            .collect();
+                        app.paste(lines);
+                    }
+                    return None;
+                }
+                if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
+                    app.undo();
+                    app.update_anchor();
+                }
+                if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
+                    app.redo();
+                    app.update_anchor();
+                }
+                invalidate_rect(hwnd);
             }
-            if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
-                app.undo();
-                app.update_anchor();
+            WM_CHAR => {
+                let c = std::char::from_u32(wparam as u32).unwrap();
+                println!("{} {:?}", win_msg_name(msg), c);
+                let mut app = sr.state_mut();
+                if wparam >= 32 {
+                    app.put_char(c);
+                    app.update_anchor();
+                }
+                if c == '\r' {
+                    app.enter();
+                    app.update_anchor();
+                }
+                if c == '\t' {
+                    app.tab();
+                    app.update_anchor();
+                }
+                invalidate_rect(hwnd);
             }
-            if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
-                app.redo();
-                app.update_anchor();
+            WM_DESTROYCLIPBOARD => {
+                println!("{}", win_msg_name(msg));
+                let sn = get_clipboard_sequence_number();
+                let app = &mut sr.state_mut();
+                assert_eq!(sn, app.clipboard.as_ref().unwrap().sequence_number);
+                app.clipboard = None;
             }
-            invalidate_rect(hwnd);
-        }
-        if msg == WM_CHAR {
-            let c = std::char::from_u32(wparam as u32).unwrap();
-            println!("{} {:?}", win_msg_name(msg), c);
-            let mut app = sr.state_mut();
-            if wparam >= 32 {
-                app.put_char(c);
-                app.update_anchor();
-            }
-            if c == '\r' {
-                app.enter();
-                app.update_anchor();
-            }
-            if c == '\t' {
-                app.tab();
-                app.update_anchor();
-            }
-            invalidate_rect(hwnd);
-        }
-        if msg == WM_DESTROYCLIPBOARD {
-            println!("{}", win_msg_name(msg));
-            let sn = get_clipboard_sequence_number();
-            let app = &mut sr.state_mut();
-            assert_eq!(sn, app.clipboard.as_ref().unwrap().sequence_number);
-            app.clipboard = None;
+            _ => {}
         }
         None
     }
