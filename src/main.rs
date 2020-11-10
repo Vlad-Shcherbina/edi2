@@ -103,6 +103,44 @@ struct Clipboard {
     lines: Vec<Line>,
 }
 
+struct UndoGroup {
+    cur_before: Waypoint,
+    edits: Vec<Edit>,
+    cur_after: Waypoint,
+}
+
+struct UndoGroupBuilder {
+    cur_before: Waypoint,
+    edits: Vec<Edit>,
+}
+
+impl Drop for UndoGroupBuilder {
+    fn drop(&mut self) {
+        assert!(self.edits.is_empty(), "forgot .finish()?");
+    }
+}
+
+impl UndoGroupBuilder {
+    fn new(cur_before: Waypoint) -> Self {
+        UndoGroupBuilder {
+            cur_before,
+            edits: vec![],
+        }
+    }
+
+    #[must_use]
+    fn finish(mut self, cur_after: Waypoint) -> UndoGroup {
+        let cur_before = std::mem::replace(
+            &mut self.cur_before,
+            Waypoint { path: vec![], pos: 0 });
+        UndoGroup {
+            cur_before,
+            edits: std::mem::replace(&mut self.edits, vec![]),
+            cur_after,
+        }
+    }
+}
+
 struct App {
     ctx: AppCtx,
 
@@ -110,8 +148,8 @@ struct App {
     blocks: Blocks,
     cblocks: CBlocks,
 
-    undo_buf: Vec<Edit>,
-    redo_buf: Vec<Edit>,
+    undo_buf: Vec<UndoGroup>,
+    redo_buf: Vec<UndoGroup>,
 
     y_offset: f32,
     root_block: BlockKey,  // owned key
@@ -155,6 +193,11 @@ impl Drop for CmdResult {
     fn drop(&mut self) {
         panic!("must be processed");
     }
+}
+
+struct Waypoint {
+    path: Vec<usize>,  // line indices
+    pos: usize,
 }
 
 fn expand_block(
@@ -401,6 +444,45 @@ impl App {
         };
         app.update_anchor();
         app
+    }
+
+    fn cur_waypoint(&self) -> Waypoint {
+        let mut path = vec![self.cur.line];
+        let mut b = self.cur.block;
+        while b != self.root_block {
+            let (parent, idx) = self.blocks[b].parent_idx.unwrap();
+            path.push(idx);
+            b = parent;
+        }
+        path.reverse();
+        Waypoint {
+            path,
+            pos: self.cur.pos,
+        }
+    }
+
+    fn set_cur_to_waypoint(&mut self, wp: &Waypoint) {
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+
+        let mut b = self.root_block;
+        assert!(!wp.path.is_empty());
+        for i in 0..wp.path.len() {
+            if wp.path[i] > 0 && !blocks[b].is_expanded() {
+                expand_block(b, blocks, cblocks, nodes);
+            }
+            if i < wp.path.len() - 1 {
+                b = match blocks[b].children[wp.path[i]] {
+                    BlockChild::Leaf => panic!(),
+                    BlockChild::Block(b) => b,
+                };
+            }
+        }
+        self.cur.block = b;
+        self.cur.line = *wp.path.last().unwrap();
+        self.cur.pos = wp.pos;
+        self.cur.sel = None;
     }
 
     fn check(&self) {
@@ -919,6 +1001,8 @@ impl App {
     fn put_char(&mut self, c: char) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
 
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
         let blocks = &self.blocks;
         let nodes = &mut self.nodes;
 
@@ -937,7 +1021,7 @@ impl App {
                 node, line_idx, line_idx + 1,
                 vec![Line::Node { local_header, node: new_node }],
                 blocks, &mut self.cblocks, nodes,
-                &mut self.undo_buf);
+                &mut undo_group.edits);
             let new_block = match blocks[self.cur.block].children[self.cur.line] {
                 BlockChild::Leaf => unreachable!(),
                 BlockChild::Block(b) => b,
@@ -946,6 +1030,8 @@ impl App {
             self.cur.block = new_block;
             self.cur.line = 0;
             self.cur.pos = 0;
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
             return CmdResult::regular();
         }
 
@@ -953,13 +1039,17 @@ impl App {
             node,
             line_idx, self.cur.pos, self.cur.pos,
             &c.to_string(),
-            nodes, &mut self.undo_buf);
+            nodes, &mut undo_group.edits);
         self.cur.pos += c.len_utf8();
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
         CmdResult::regular()
     }
 
     fn enter(&mut self) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
 
         let blocks = &mut self.blocks;
         let cblocks = &mut self.cblocks;
@@ -977,13 +1067,13 @@ impl App {
             node, line_idx,
             self.cur.pos, end_pos,
             "",
-            nodes, &mut self.undo_buf);
+            nodes, &mut undo_group.edits);
 
         if self.cur.line == 0 {
             splice_node_lines(b.node, 0, 0, 
                 vec![Line::Text { text: tail, monospace: false }],
                 blocks, cblocks, nodes,
-                &mut self.undo_buf);
+                &mut undo_group.edits);
         } else {
             let monospace = match nodes[node].lines[line_idx].line {
                 Line::Text { monospace, .. } => monospace,
@@ -992,16 +1082,20 @@ impl App {
             splice_node_lines(b.node, line_idx + 1, line_idx + 1,
                 vec![Line::Text { text: tail, monospace }],
                 blocks, cblocks, nodes,
-                &mut self.undo_buf);
+                &mut undo_group.edits);
         }
         self.cur.line += 1;
         self.cur.pos = 0;
 
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
         CmdResult::regular()
     }
 
     fn backspace(&mut self) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
 
         let blocks = &mut self.blocks;
         let cblocks = &mut self.cblocks;
@@ -1014,15 +1108,17 @@ impl App {
         if let Some(prev_pos) = prev_char_pos(text, self.cur.pos) {
             splice_line_text(node, line_idx,
                 prev_pos, self.cur.pos, "",
-                nodes, &mut self.undo_buf);
+                nodes, &mut undo_group.edits);
             self.cur.pos = prev_pos;
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
             return CmdResult::regular();
         }
 
         let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
         let (prev_block, prev_idx) = match prev_leaf {
             Some(x) => x,
-            None => return CmdResult::regular(),
+            None => return CmdResult::nothing(),
         };
 
         if blocks[prev_block].depth > b.depth {
@@ -1058,7 +1154,7 @@ impl App {
                 0, nodes[blocks[self.cur.block].node].lines.len(),
                 vec![],
                 blocks, cblocks, nodes,
-                &mut self.undo_buf);
+                &mut undo_group.edits);
 
             assert!(idx_in_parent > 0);
             let parent_node = blocks[parent_block].node;
@@ -1075,10 +1171,12 @@ impl App {
                 idx_in_parent - 1, idx_in_parent,
                 lines,
                 blocks, cblocks, nodes,
-                &mut self.undo_buf);
+                &mut undo_group.edits);
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
             self.cur.pos = 0;
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
             return CmdResult::regular();
         }
 
@@ -1088,7 +1186,7 @@ impl App {
         let prev_text_len = nodes[prev_node].lines[prev_line_idx].line.text().len();
         splice_line_text(prev_node, prev_line_idx,
             prev_text_len, prev_text_len, &text,
-            nodes, &mut self.undo_buf);
+            nodes, &mut undo_group.edits);
 
         self.cur.block = prev_block;
         self.cur.line = prev_idx;
@@ -1096,8 +1194,10 @@ impl App {
         splice_node_lines(
             node, line_idx, line_idx + 1, vec![],
             blocks, cblocks, nodes,
-            &mut self.undo_buf);
+            &mut undo_group.edits);
 
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
         CmdResult::regular()
     }
 
@@ -1180,6 +1280,8 @@ impl App {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
         let mut p = self.cur.block;
         while let Some((parent, idx)) = blocks[p].parent_idx {
             if blocks[parent].node == blocks[self.cur.block].node &&
@@ -1247,7 +1349,7 @@ impl App {
             };
             splice_line_text(node_key, node_line,
                 0, header_len, &new_header_text,
-                nodes, &mut self.undo_buf);
+                nodes, &mut undo_group.edits);
             if self.cur.line > 0 && !blocks[self.cur.block].is_expanded() {
                 expand_block(self.cur.block, blocks, cblocks, nodes);
             }
@@ -1261,41 +1363,45 @@ impl App {
             node_key,
             line1 - 1, line2 + 1 - 1, new_lines,
             blocks, cblocks, nodes,
-            &mut self.undo_buf);
+            &mut undo_group.edits);
 
         self.sink_cursor();
 
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
         CmdResult::regular()
+    }
+
+    fn undo_or_redo(&mut self, is_undo: bool) -> CmdResult {
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+
+        let buf1 = if is_undo { &mut self.undo_buf } else { &mut self.redo_buf };
+        if let Some(mut g) = buf1.pop() {
+            let mut redo_group = UndoGroupBuilder::new(g.cur_after);
+            while let Some(edit) = g.edits.pop() {
+                apply_edit(edit, blocks, cblocks, nodes, &mut redo_group.edits);
+            }
+            self.set_cur_to_waypoint(&g.cur_before);
+            let redo_group = redo_group.finish(g.cur_before);
+            if is_undo {
+                self.redo_buf.push(redo_group);
+            } else {
+                self.undo_buf.push(redo_group);
+            }
+            CmdResult::regular()
+        } else {
+            CmdResult::nothing()
+        }
     }
 
     fn undo(&mut self) -> CmdResult {
-        let blocks = &mut self.blocks;
-        let cblocks = &mut self.cblocks;
-        let nodes = &mut self.nodes;
-        while let Some(edit) = self.undo_buf.pop() {
-            apply_edit(edit, blocks, cblocks, nodes, &mut self.redo_buf);
-        }
-        self.cur.block = self.root_block;
-        self.cur.line = 1;
-        self.cur.pos = 0;
-        self.cur.sel = None;
-
-        CmdResult::regular()
+        self.undo_or_redo(true)
     }
 
     fn redo(&mut self) -> CmdResult {
-        let blocks = &mut self.blocks;
-        let cblocks = &mut self.cblocks;
-        let nodes = &mut self.nodes;
-        while let Some(edit) = self.redo_buf.pop() {
-            apply_edit(edit, blocks, cblocks, nodes, &mut self.undo_buf);
-        }
-        self.cur.block = self.root_block;
-        self.cur.line = 1;
-        self.cur.pos = 0;
-        self.cur.sel = None;
-
-        CmdResult::regular()
+        self.undo_or_redo(false)
     }
 }
 
