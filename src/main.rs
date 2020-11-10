@@ -120,6 +120,43 @@ struct App {
     clipboard: Option<Clipboard>,
 }
 
+#[must_use]
+struct CmdResult {
+    repaint: bool,
+    update_anchor_x: bool,
+}
+
+impl CmdResult {
+    fn nothing() -> Self {
+        CmdResult {
+            repaint: false,
+            update_anchor_x: false,
+        }
+    }
+    fn regular() -> Self {
+        CmdResult {
+            repaint: true,
+            update_anchor_x: true,
+        }
+    }
+
+    fn process(self, hwnd: HWND, app: &mut App) {
+        if self.repaint {
+            invalidate_rect(hwnd);
+        }
+        if self.update_anchor_x {
+            app.update_anchor();
+        }
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for CmdResult {
+    fn drop(&mut self) {
+        panic!("must be processed");
+    }
+}
+
 fn expand_block(
     block: BlockKey,
     blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
@@ -409,7 +446,7 @@ impl App {
         assert_eq!(self.cblocks.len(), cnt.cblock);
     }
 
-    fn scroll(&mut self, delta: f32) {
+    fn scroll(&mut self, delta: f32) -> CmdResult {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
@@ -420,6 +457,11 @@ impl App {
         let max_offset = 10.0 - height
             + blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes);
         self.y_offset = self.y_offset.max(max_offset);
+
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+        }
     }
 
     fn update_anchor(&mut self) {
@@ -430,7 +472,7 @@ impl App {
             self.cur.line, self.cur.pos, &self.ctx, blocks, nodes);
     }
 
-    fn collapse_block(&mut self, block: BlockKey) {
+    fn collapse_block(&mut self, block: BlockKey) -> CmdResult {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
@@ -489,6 +531,8 @@ impl App {
         }
 
         blocks[block].collapsed = Some(cforest);
+
+        CmdResult::regular()
     }
 
     // If the cursor is on a VisTree::Node boundary and not on a line of text
@@ -520,7 +564,7 @@ impl App {
         }
     }
 
-    fn left(&mut self) {
+    fn left(&mut self) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -535,7 +579,7 @@ impl App {
                 let text = &node.lines[line_idx].line.text();
                 if let Some(pos) = prev_char_pos(text, self.cur.pos) {
                     self.cur.pos = pos;
-                    return;
+                    return CmdResult::regular();
                 }
                 let leaf = (self.cur.block, self.cur.line);
                 if let Some((prev_block, prev_line)) = prev_leaf(leaf, blocks) {
@@ -550,9 +594,11 @@ impl App {
                 }
             }
         }
+
+        CmdResult::regular()
     }
 
-    fn right(&mut self) {
+    fn right(&mut self) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -567,7 +613,7 @@ impl App {
                 let text = &node.lines[line_idx].line.text();
                 if let Some(pos) = next_char_pos(text, self.cur.pos) {
                     self.cur.pos = pos;
-                    return;
+                    return CmdResult::regular();
                 }
                 let leaf = (self.cur.block, self.cur.line);
                 if let Some((next_block, next_line)) = next_leaf(leaf, blocks) {
@@ -577,9 +623,11 @@ impl App {
                 }
             }
         }
+
+        CmdResult::regular()
     }
 
-    fn shift_left(&mut self) {
+    fn shift_left(&mut self) -> CmdResult {
         let line = self.cur.line;
         let pos = self.cur.pos;
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
@@ -596,7 +644,7 @@ impl App {
                 BlockChild::Block(_) =>
                     if self.cur.pos == 1 {
                         self.cur.pos = 0;
-                        return;
+                        return CmdResult::regular();
                     }
                 BlockChild::Leaf => {
                     let (node, line_idx) = blocks[self.cur.block]
@@ -604,17 +652,17 @@ impl App {
                     let text = &nodes[node].lines[line_idx].line.text();
                     if let Some(pos) = prev_char_pos(text, self.cur.pos) {
                         self.cur.pos = pos;
-                        return;
+                        return CmdResult::regular();
                     }                        
                 }
             }
             if self.cur.block == self.root_block && self.cur.line == 1 {
-                return;
+                return CmdResult::regular();
             }
             if self.cur.line > 0 {
                 self.cur.line -= 1;
                 self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
-                return;
+                return CmdResult::regular();
             }
 
             let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
@@ -677,9 +725,11 @@ impl App {
                 self.cur.sel = None;
             }
         }
+
+        CmdResult::regular()
     }
 
-    fn shift_right(&mut self) {
+    fn shift_right(&mut self) -> CmdResult {
         let line = self.cur.line;
         let pos = self.cur.pos;
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
@@ -696,7 +746,7 @@ impl App {
                 BlockChild::Block(_) =>
                     if self.cur.pos == 0 {
                         self.cur.pos = 1;
-                        return;
+                        return CmdResult::regular();
                     }
                 BlockChild::Leaf => {
                     let (node, line_idx) = blocks[self.cur.block]
@@ -704,17 +754,17 @@ impl App {
                     let text = &nodes[node].lines[line_idx].line.text();
                     if let Some(pos) = next_char_pos(text, self.cur.pos) {
                         self.cur.pos = pos;
-                        return;
+                        return CmdResult::regular();
                     }                        
                 }
             }
             if self.cur.line + 1 < blocks[self.cur.block].children.len() {
                 self.cur.line += 1;
                 self.cur.pos = 0;
-                return;
+                return CmdResult::regular();
             }
             if self.cur.block == self.root_block {
-                return;
+                return CmdResult::regular();
             }
 
             let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
@@ -776,9 +826,11 @@ impl App {
                 self.cur.sel = None;
             }
         }
+
+        CmdResult::regular()
     }
 
-    fn up(&mut self) {
+    fn up(&mut self) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -814,9 +866,14 @@ impl App {
                 self.cur.block = prev_block;
             }
         }
+
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+        }
     }
 
-    fn down(&mut self) {
+    fn down(&mut self) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -852,9 +909,14 @@ impl App {
                 self.cur.block = next_block;
             }
         }
+
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+        }
     }
 
-    fn put_char(&mut self, c: char) {
+    fn put_char(&mut self, c: char) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
 
         let blocks = &self.blocks;
@@ -884,7 +946,7 @@ impl App {
             self.cur.block = new_block;
             self.cur.line = 0;
             self.cur.pos = 0;
-            return;
+            return CmdResult::regular();
         }
 
         splice_line_text(
@@ -893,9 +955,10 @@ impl App {
             &c.to_string(),
             nodes, &mut self.undo_buf);
         self.cur.pos += c.len_utf8();
+        CmdResult::regular()
     }
 
-    fn enter(&mut self) {
+    fn enter(&mut self) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
 
         let blocks = &mut self.blocks;
@@ -933,9 +996,11 @@ impl App {
         }
         self.cur.line += 1;
         self.cur.pos = 0;
+
+        CmdResult::regular()
     }
 
-    fn backspace(&mut self) {
+    fn backspace(&mut self) -> CmdResult {
         assert!(self.cur.sel.is_none(), "TODO");
 
         let blocks = &mut self.blocks;
@@ -951,20 +1016,20 @@ impl App {
                 prev_pos, self.cur.pos, "",
                 nodes, &mut self.undo_buf);
             self.cur.pos = prev_pos;
-            return;
+            return CmdResult::regular();
         }
 
         let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
         let (prev_block, prev_idx) = match prev_leaf {
             Some(x) => x,
-            None => return,
+            None => return CmdResult::regular(),
         };
 
-        if  blocks[prev_block].depth > b.depth {
+        if blocks[prev_block].depth > b.depth {
             if prev_idx == 0 && !blocks[prev_block].is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
                 expand_block(prev_block, blocks, cblocks, nodes);
-                return;
+                return CmdResult::regular();
             }
         } else if prev_block != self.cur.block {
             assert_eq!(self.cur.line, 0);
@@ -974,7 +1039,7 @@ impl App {
             loop {
                 if blocks[ancestor].node == b.node {
                     self.cur.block = ancestor;
-                    return;
+                    return CmdResult::regular();
                 }
                 ancestor = match blocks[ancestor].parent_idx {
                     None => break,
@@ -985,7 +1050,7 @@ impl App {
             if !b.is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
                 expand_block(self.cur.block, blocks, cblocks, nodes);
-                return;
+                return CmdResult::regular();
             }
 
             let mut lines = splice_node_lines(
@@ -1014,7 +1079,7 @@ impl App {
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
             self.cur.pos = 0;
-            return;
+            return CmdResult::regular();
         }
 
         let text = text.to_owned();
@@ -1032,21 +1097,25 @@ impl App {
             node, line_idx, line_idx + 1, vec![],
             blocks, cblocks, nodes,
             &mut self.undo_buf);
+
+        CmdResult::regular()
     }
 
-    fn tab(&mut self) {
+    fn tab(&mut self) -> CmdResult {
         if self.cur.sel.is_some() {
-            return;  // TODO?
+            return CmdResult::nothing();  // TODO?
+        }
+        if self.cur.line != 0 {
+            return CmdResult::nothing();
         }
         let blocks = &mut self.blocks;
         let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
-        if self.cur.line == 0 {
-            if blocks[self.cur.block].is_expanded() {
-                self.collapse_block(self.cur.block);
-            } else {
-                expand_block(self.cur.block, blocks, cblocks, nodes);
-            }
+        if blocks[self.cur.block].is_expanded() {
+            self.collapse_block(self.cur.block)
+        } else {
+            expand_block(self.cur.block, blocks, cblocks, nodes);
+            CmdResult::regular()
         }
     }
 
@@ -1099,7 +1168,7 @@ impl App {
         (lines, plain_text)
     }
 
-    fn paste(&mut self, lines: Vec<Line>) {
+    fn paste(&mut self, lines: Vec<Line>) -> CmdResult {
         let cur_line_pos = (self.cur.line, self.cur.pos);
         let sel_line_pos = match self.cur.sel.as_ref() {
             Some(sel) => (sel.line, sel.pos),
@@ -1116,7 +1185,7 @@ impl App {
             if blocks[parent].node == blocks[self.cur.block].node &&
                line1 <= idx && idx <= line2 {
                 self.cur.block = parent;
-                return;
+                return CmdResult::regular();
             }
             p = parent;
         }
@@ -1195,9 +1264,11 @@ impl App {
             &mut self.undo_buf);
 
         self.sink_cursor();
+
+        CmdResult::regular()
     }
 
-    fn undo(&mut self) {
+    fn undo(&mut self) -> CmdResult {
         let blocks = &mut self.blocks;
         let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
@@ -1208,9 +1279,11 @@ impl App {
         self.cur.line = 1;
         self.cur.pos = 0;
         self.cur.sel = None;
+
+        CmdResult::regular()
     }
 
-    fn redo(&mut self) {
+    fn redo(&mut self) -> CmdResult {
         let blocks = &mut self.blocks;
         let cblocks = &mut self.cblocks;
         let nodes = &mut self.nodes;
@@ -1221,6 +1294,8 @@ impl App {
         self.cur.line = 1;
         self.cur.pos = 0;
         self.cur.sel = None;
+
+        CmdResult::regular()
     }
 }
 
@@ -1314,7 +1389,7 @@ impl WindowProcState for App {
                     sr.state_mut().ctx.render_target.Resize(&render_size)
                 };
                 assert!(hr == S_OK, "0x{:x}", hr);
-            }        
+            }
             WM_PAINT => {
                 eprintln!("{}", win_msg_name(msg));
                 paint(&mut *sr.state_mut());
@@ -1323,8 +1398,8 @@ impl WindowProcState for App {
                 let delta = GET_WHEEL_DELTA_WPARAM(wparam);
                 println!("{} {}", win_msg_name(msg), delta);
                 let delta = f32::from(delta) / 120.0 * get_wheel_scroll_lines() as f32;
-                sr.state_mut().scroll(delta);
-                invalidate_rect(hwnd);
+                let app = &mut *sr.state_mut();
+                app.scroll(delta).process(hwnd, app);
             }
             WM_MOUSEMOVE => {
                 let x = GET_X_LPARAM(lparam);
@@ -1377,22 +1452,19 @@ impl WindowProcState for App {
                             anchor_x: 0.0,
                             sel: None,
                         };
-                        app.update_anchor();
-                        invalidate_rect(hwnd);
+                        CmdResult::regular().process(hwnd, app);
                     }
                     gfx::MouseResult::Toggle { block } => {
                         let blocks = &mut app.blocks;
                         let cblocks = &mut app.cblocks;
                         let nodes = &mut app.nodes;
-                        if blocks[block].is_expanded() {
-                            app.collapse_block(block);
-                            app.update_anchor();
-                            invalidate_rect(hwnd);
+                        let cmd_res = if blocks[block].is_expanded() {
+                            app.collapse_block(block)
                         } else {
                             expand_block(block, blocks, cblocks, nodes);
-                            app.update_anchor();
-                            invalidate_rect(hwnd);
-                        }
+                            CmdResult::regular()
+                        };
+                        cmd_res.process(hwnd, app);
                     }
                 }
             }
@@ -1404,35 +1476,40 @@ impl WindowProcState for App {
                 println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
 
                 let mut app = sr.state_mut();
-                match key_code {
-                    VK_LEFT => {
+                let cmd_res = match key_code {
+                    VK_LEFT => Some(
                         if shift_pressed {
-                            app.shift_left();
+                            app.shift_left()
                         } else {
-                            app.left();
+                            app.left()
                         }
-                        app.update_anchor();
-                    }
-                    VK_RIGHT => {
+                    ),
+                    VK_RIGHT => Some(
                         if shift_pressed {
-                            app.shift_right();
+                            app.shift_right()
                         } else {
-                            app.right();
+                            app.right()
                         }
-                        app.update_anchor();
-                    }
-                    VK_UP => {
-                        app.up();
-                    }
-                    VK_DOWN => {
-                        app.down();
-                    }
-                    VK_BACK => {
-                        app.backspace();
-                        app.update_anchor();
-                    }
-                    _ => {}
+                    ),
+                    VK_UP => Some(app.up()),
+                    VK_DOWN => Some(app.down()),
+                    VK_BACK => Some(app.backspace()),
+                    _ => None
+                };
+                if let Some(cmd_res) = cmd_res {
+                    cmd_res.process(hwnd, &mut app);
+                    return None;
                 }
+
+                if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
+                    app.undo().process(hwnd, &mut app);
+                    return None;
+                }
+                if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
+                    app.redo().process(hwnd, &mut app);
+                    return None;
+                }
+
                 if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
                     let (lines, plain_text) = app.copy();
                     drop(app);
@@ -1446,6 +1523,7 @@ impl WindowProcState for App {
                         sequence_number: get_clipboard_sequence_number(),
                         lines,
                     });
+                    CmdResult::regular().process(hwnd, &mut app);
                     return None;
                 }
                 if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
@@ -1457,46 +1535,36 @@ impl WindowProcState for App {
                     cm.close();
 
                     let mut app = sr.state_mut();
-                    if has_private {
+                    let cmd_res = if has_private {
                         let clipboard = app.clipboard.as_ref().unwrap(); 
                         assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
                         let lines = clipboard.lines.clone();
-                        app.paste(lines);
+                        app.paste(lines)
                     } else if let Some(plain_text) = plain_text {
                         let lines: Vec<Line> = plain_text.split('\n')
                             .map(|s| Line::Text { text: s.to_owned(), monospace: false })
                             .collect();
-                        app.paste(lines);
-                    }
+                        app.paste(lines)
+                    } else {
+                        CmdResult::nothing()
+                    };
+                    cmd_res.process(hwnd, &mut app);
                     return None;
                 }
-                if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
-                    app.undo();
-                    app.update_anchor();
-                }
-                if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
-                    app.redo();
-                    app.update_anchor();
-                }
-                invalidate_rect(hwnd);
             }
             WM_CHAR => {
                 let c = std::char::from_u32(wparam as u32).unwrap();
                 println!("{} {:?}", win_msg_name(msg), c);
                 let mut app = sr.state_mut();
                 if wparam >= 32 {
-                    app.put_char(c);
-                    app.update_anchor();
+                    app.put_char(c).process(hwnd, &mut app);
                 }
                 if c == '\r' {
-                    app.enter();
-                    app.update_anchor();
+                    app.enter().process(hwnd, &mut app);
                 }
                 if c == '\t' {
-                    app.tab();
-                    app.update_anchor();
+                    app.tab().process(hwnd, &mut app);
                 }
-                invalidate_rect(hwnd);
             }
             WM_DESTROYCLIPBOARD => {
                 println!("{}", win_msg_name(msg));
