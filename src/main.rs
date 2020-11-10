@@ -1404,31 +1404,34 @@ impl WindowProcState for App {
                 println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
 
                 let mut app = sr.state_mut();
-                if key_code == VK_LEFT {
-                    if shift_pressed {
-                        app.shift_left();
-                    } else {
-                        app.left();
+                match key_code {
+                    VK_LEFT => {
+                        if shift_pressed {
+                            app.shift_left();
+                        } else {
+                            app.left();
+                        }
+                        app.update_anchor();
                     }
-                    app.update_anchor();
-                }
-                if key_code == VK_RIGHT {
-                    if shift_pressed {
-                        app.shift_right();
-                    } else {
-                        app.right();
+                    VK_RIGHT => {
+                        if shift_pressed {
+                            app.shift_right();
+                        } else {
+                            app.right();
+                        }
+                        app.update_anchor();
                     }
-                    app.update_anchor();
-                }
-                if key_code == VK_UP {
-                    app.up();
-                }
-                if key_code == VK_DOWN {
-                    app.down();
-                }
-                if key_code == VK_BACK {
-                    app.backspace();
-                    app.update_anchor();
+                    VK_UP => {
+                        app.up();
+                    }
+                    VK_DOWN => {
+                        app.down();
+                    }
+                    VK_BACK => {
+                        app.backspace();
+                        app.update_anchor();
+                    }
+                    _ => {}
                 }
                 if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
                     let (lines, plain_text) = app.copy();
