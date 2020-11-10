@@ -141,6 +141,15 @@ impl UndoGroupBuilder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CmdClass {
+    PutChar,
+    PutWhitespace,
+    BackspaceChar,
+    BackspaceNewLine,
+    Other,
+}
+
 struct App {
     ctx: AppCtx,
 
@@ -150,6 +159,7 @@ struct App {
 
     undo_buf: Vec<UndoGroup>,
     redo_buf: Vec<UndoGroup>,
+    last_cmd_class: CmdClass,
 
     y_offset: f32,
     root_block: BlockKey,  // owned key
@@ -162,6 +172,7 @@ struct App {
 struct CmdResult {
     repaint: bool,
     update_anchor_x: bool,
+    class: CmdClass,
 }
 
 impl CmdResult {
@@ -169,12 +180,14 @@ impl CmdResult {
         CmdResult {
             repaint: false,
             update_anchor_x: false,
+            class: CmdClass::Other,
         }
     }
     fn regular() -> Self {
         CmdResult {
             repaint: true,
             update_anchor_x: true,
+            class: CmdClass::Other,
         }
     }
 
@@ -185,6 +198,8 @@ impl CmdResult {
         if self.update_anchor_x {
             app.update_anchor();
         }
+        dbg!(self.class);
+        app.last_cmd_class = self.class;
         std::mem::forget(self);
     }
 }
@@ -195,6 +210,7 @@ impl Drop for CmdResult {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Waypoint {
     path: Vec<usize>,  // line indices
     pos: usize,
@@ -431,6 +447,7 @@ impl App {
             cblocks,
             undo_buf: vec![],
             redo_buf: vec![],
+            last_cmd_class: CmdClass::Other,
             cur: Cur {
                 block: root_block,
                 line: 1,
@@ -543,6 +560,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            class: CmdClass::Other,
         }
     }
 
@@ -952,6 +970,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            class: CmdClass::Other,
         }
     }
 
@@ -995,7 +1014,17 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            class: CmdClass::Other,
         }
+    }
+
+    fn merge_undo_groups(&mut self) {
+        let g2 = self.undo_buf.pop().unwrap();
+        let mut g1 = self.undo_buf.pop().unwrap();
+        assert_eq!(g1.cur_after, g2.cur_before);
+        g1.edits.extend(g2.edits);
+        g1.cur_after = g2.cur_after;
+        self.undo_buf.push(g1);
     }
 
     fn put_char(&mut self, c: char) -> CmdResult {
@@ -1043,7 +1072,20 @@ impl App {
         self.cur.pos += c.len_utf8();
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
-        CmdResult::regular()
+        let mut res = CmdResult::regular();
+        if c == ' ' {
+            if self.last_cmd_class == CmdClass::PutWhitespace {
+                self.merge_undo_groups();
+            }
+            res.class = CmdClass::PutWhitespace;
+        } else {
+            if self.last_cmd_class == CmdClass::PutWhitespace ||
+               self.last_cmd_class == CmdClass::PutChar {
+                self.merge_undo_groups();
+            }
+            res.class = CmdClass::PutChar;
+        }
+        res
     }
 
     fn enter(&mut self) -> CmdResult {
@@ -1089,7 +1131,12 @@ impl App {
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
-        CmdResult::regular()
+        if self.last_cmd_class == CmdClass::PutWhitespace {
+            self.merge_undo_groups();
+        }
+        let mut res = CmdResult::regular();
+        res.class = CmdClass::PutWhitespace;
+        res
     }
 
     fn backspace(&mut self) -> CmdResult {
@@ -1112,7 +1159,13 @@ impl App {
             self.cur.pos = prev_pos;
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
-            return CmdResult::regular();
+            if self.last_cmd_class == CmdClass::BackspaceChar ||
+               self.last_cmd_class == CmdClass::BackspaceNewLine {
+                self.merge_undo_groups();
+            }
+            let mut res = CmdResult::regular();
+            res.class = CmdClass::BackspaceChar;
+            return res;
         }
 
         let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
@@ -1198,7 +1251,9 @@ impl App {
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
-        CmdResult::regular()
+        let mut res = CmdResult::regular();
+        res.class = CmdClass::BackspaceNewLine;
+        res
     }
 
     fn tab(&mut self) -> CmdResult {
