@@ -952,7 +952,7 @@ impl App {
             if let Some((prev_block, prev_idx)) = prev_leaf {
                 let b = &blocks[prev_block];
 
-                let y = b.size(&self.ctx, blocks, nodes).1 - eps;
+                let y = b.child_size(prev_idx, &self.ctx, blocks, nodes).1 - eps;
 
                 let (node, line_idx) = b.node_line_idx(prev_idx, blocks).unwrap();
                 let node = &nodes[node];
