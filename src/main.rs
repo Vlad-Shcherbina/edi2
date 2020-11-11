@@ -543,6 +543,9 @@ impl App {
             &self.blocks, &self.cblocks, &self.nodes);
         assert_eq!(self.blocks.len(), cnt.block);
         assert_eq!(self.cblocks.len(), cnt.cblock);
+        if let Some(sel) = self.cur.sel.as_ref() {
+            assert_ne!((self.cur.line, self.cur.pos), (sel.line, sel.pos));
+        }
     }
 
     fn scroll(&mut self, delta: f32) -> CmdResult {
@@ -757,7 +760,7 @@ impl App {
                 }
             }
             if self.cur.block == self.root_block && self.cur.line == 1 {
-                return CmdResult::regular();
+                return CmdResult::nothing();
             }
             if self.cur.line > 0 {
                 self.cur.line -= 1;
@@ -952,17 +955,12 @@ impl App {
             if let Some((prev_block, prev_idx)) = prev_leaf {
                 let b = &blocks[prev_block];
 
-                let y = b.child_size(prev_idx, &self.ctx, blocks, nodes).1 - eps;
-
-                let (node, line_idx) = b.node_line_idx(prev_idx, blocks).unwrap();
-                let node = &nodes[node];
-                let layout = node.line_layout(line_idx, &self.ctx);
-
                 let x = self.cur.anchor_x
                     - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                let y = b.child_size(prev_idx, &self.ctx, blocks, nodes).1 - eps;
 
                 self.cur.line = prev_idx;
-                self.cur.pos = layout.coords_to_pos(x, y);
+                self.cur.pos = b.child_coords_to_pos(prev_idx, (x, y), &self.ctx, blocks, nodes);
                 self.cur.block = prev_block;
             }
         }
@@ -996,21 +994,232 @@ impl App {
             if let Some((next_block, next_idx)) = next_leaf {
                 let b = &blocks[next_block];
 
-                let y = eps;
-
-                let (node, line_idx) = b.node_line_idx(next_idx, blocks).unwrap();
-                let node = &nodes[node];
-                let layout = node.line_layout(line_idx, &self.ctx);
-
                 let x = self.cur.anchor_x
                     - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                let y = eps;
 
                 self.cur.line = next_idx;
-                self.cur.pos = layout.coords_to_pos(x, y);
+                self.cur.pos = b.child_coords_to_pos(
+                    next_idx, (x, y),
+                    &self.ctx, blocks, nodes);
                 self.cur.block = next_block;
             }
         }
 
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+            class: CmdClass::Other,
+        }
+    }
+
+    fn shift_up(&mut self) -> CmdResult {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+            anchor_line: line,
+            anchor_pos: pos,
+        });
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+        let eps = 3.0;
+        if self.cur.line <= sel.line {
+            if self.cur.block == self.root_block && self.cur.line == 1 {
+                self.cur.pos = 0;
+                if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                   self.cur.sel = None;
+                }
+                return CmdResult {
+                    repaint: true,
+                    update_anchor_x: false,
+                    class: CmdClass::Other,
+                };                
+            }
+            if self.cur.line > 0 {
+                let b = &blocks[self.cur.block];
+                let x = self.cur.anchor_x
+                    - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                let y = b.child_size(self.cur.line - 1, &self.ctx, blocks, nodes).1 - eps;
+                self.cur.line -= 1;
+                self.cur.pos = b.child_coords_to_pos(
+                    self.cur.line, (x, y),
+                    &self.ctx, blocks, nodes);
+                assert_ne!(self.cur.line, sel.line);
+                return CmdResult {
+                    repaint: true,
+                    update_anchor_x: false,
+                    class: CmdClass::Other,
+                };
+            }
+
+            let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
+            assert!(i > 0);
+            let pb = &blocks[parent];
+            self.cur.block = parent;
+            self.cur.line = i - 1;
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
+            let y = pb.child_size(i - 1, &self.ctx, blocks, nodes).1 - eps;
+            self.cur.pos = pb.child_coords_to_pos(
+                i - 1, (x, y),
+                &self.ctx, blocks, nodes);
+
+            sel.line = i;
+            sel.pos = 1;
+            sel.anchor_path.push(i);
+        } else {
+            assert!(self.cur.line > sel.line);
+            self.cur.line -= 1;
+            loop {
+                if sel.line < self.cur.line {
+                    break;
+                }
+                if let Some(i) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[i] {
+                        BlockChild::Leaf => panic!(),
+                        BlockChild::Block(b) => b,
+                    };
+                    self.cur.line = blocks[self.cur.block].children.len() - 1;
+
+                    match sel.anchor_path.last() {
+                        Some(&i) => {
+                            sel.line = i;
+                            sel.pos = 0;
+                        }
+                        None => {
+                            sel.line = sel.anchor_line;
+                            sel.pos = sel.anchor_pos;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+            let b = &blocks[self.cur.block];
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+            let y = b.child_size(self.cur.line, &self.ctx, blocks, nodes).1 - eps;
+            self.cur.pos = b.child_coords_to_pos(
+                self.cur.line, (x, y),
+                &self.ctx, blocks, nodes);
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+               self.cur.sel = None;
+            }
+        }
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+            class: CmdClass::Other,
+        }
+    }
+
+    fn shift_down(&mut self) -> CmdResult {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+            anchor_line: line,
+            anchor_pos: pos,
+        });
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+        let eps = 3.0;
+        if self.cur.line >= sel.line {
+            let b = &blocks[self.cur.block];
+            if self.cur.line + 1 < b.children.len() {
+                let b = &blocks[self.cur.block];
+                let x = self.cur.anchor_x
+                    - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                let y = eps;
+                self.cur.line += 1;
+                self.cur.pos = b.child_coords_to_pos(
+                    self.cur.line, (x, y),
+                    &self.ctx, blocks, nodes);
+                assert_ne!(self.cur.line, sel.line);
+                return CmdResult {
+                    repaint: true,
+                    update_anchor_x: false,
+                    class: CmdClass::Other,
+                };
+            }
+
+            let pb = loop {
+                if self.cur.block == self.root_block {
+                    let b = &blocks[self.cur.block];
+                    self.cur.line = b.children.len() - 1;
+                    self.cur.pos = b.max_pos(self.cur.line, blocks, nodes);
+                    if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                       self.cur.sel = None;
+                    }
+                    return CmdResult {
+                        repaint: true,
+                        update_anchor_x: false,
+                        class: CmdClass::Other,
+                    };  
+                }
+                let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
+                sel.anchor_path.push(i);
+                sel.line = i;
+                sel.pos = 0;
+
+                let pb = &blocks[parent];
+                self.cur.block = parent;
+                self.cur.line = i + 1;
+                if self.cur.line < pb.children.len() {
+                    break pb;
+                }
+            };
+
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
+            let y = eps;
+            self.cur.pos = pb.child_coords_to_pos(
+                self.cur.line, (x, y),
+                &self.ctx, blocks, nodes);
+        } else {
+            assert!(self.cur.line < sel.line);
+            self.cur.line += 1;
+            loop {
+                if sel.line > self.cur.line {
+                    break;
+                }
+                if let Some(i) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[i] {
+                        BlockChild::Leaf => panic!(),
+                        BlockChild::Block(b) => b,
+                    };
+                    self.cur.line = 0;
+
+                    match sel.anchor_path.last() {
+                        Some(&i) => {
+                            sel.line = i;
+                            sel.pos = blocks[self.cur.block].max_pos(i, blocks, nodes);
+                        }
+                        None => {
+                            sel.line = sel.anchor_line;
+                            sel.pos = sel.anchor_pos;
+                        }
+                    }
+                } else {
+                    break;
+                }
+            }
+            let b = &blocks[self.cur.block];
+            let x = self.cur.anchor_x
+                - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+            let y = eps;
+            self.cur.pos = b.child_coords_to_pos(
+                self.cur.line, (x, y),
+                &self.ctx, blocks, nodes);
+            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+               self.cur.sel = None;
+            }
+        }
         CmdResult {
             repaint: true,
             update_anchor_x: false,
@@ -1652,8 +1861,20 @@ impl WindowProcState for App {
                             app.right()
                         }
                     ),
-                    VK_UP => Some(app.up()),
-                    VK_DOWN => Some(app.down()),
+                    VK_UP => Some(
+                        if shift_pressed {
+                            app.shift_up()
+                        } else {
+                            app.up()
+                        }
+                    ),
+                    VK_DOWN => Some(
+                        if shift_pressed {
+                            app.shift_down()
+                        } else {
+                            app.down()
+                        }
+                    ),
                     VK_BACK => Some(app.backspace()),
                     _ => None
                 };

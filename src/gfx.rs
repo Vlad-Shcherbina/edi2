@@ -109,6 +109,29 @@ impl Block {
             BlockChild::Block(_) => 1,
         }
     }
+
+    pub(crate) fn child_coords_to_pos(
+        &self,
+        idx: usize,
+        (x, y): (f32, f32),
+        ctx: &AppCtx, blocks: &Blocks, nodes: &Nodes,
+    ) -> usize {
+        match self.children[idx] {
+            BlockChild::Leaf => {
+                let (node, line_idx) = self.node_line_idx(idx, blocks).unwrap();
+                let layout = nodes[node].line_layout(line_idx, ctx);
+                layout.coords_to_pos(x, y)
+            }
+            BlockChild::Block(_) => {
+                let w = self.child_size(idx, ctx, blocks, nodes).0;
+                if x < 0.5 * w {
+                    0
+                } else {
+                    1
+                }
+            }
+        }
+    }
 }
 
 pub trait BlockVisitor {
