@@ -14,7 +14,6 @@ pub mod edit;
 mod commands;
 
 use std::ptr::null_mut;
-use once_cell::unsync::OnceCell;
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
 use winapi::shared::minwindef::*;
@@ -334,22 +333,16 @@ fn push_block_children_from_cforest(
     assert!(cforest.0.is_empty());
 }
 
-fn text_line(text: &str, monospace: bool) -> LineWithLayout {
-    LineWithLayout {
-        line: Line::Text {
-            text: text.to_owned(),
-            monospace,
-        },
-        layout: OnceCell::new(),
+fn text_line(text: &str, monospace: bool) -> Line {
+    Line::Text {
+        text: text.to_owned(),
+        monospace,
     }
 }
-fn node_line(local_header: &str, node: NodeKey) -> LineWithLayout {
-    LineWithLayout {
-        line: Line::Node {
-            local_header: local_header.to_owned(),
-            node,
-        },
-        layout: OnceCell::new(),
+fn node_line(local_header: &str, node: NodeKey) -> Line {
+    Line::Node {
+        local_header: local_header.to_owned(),
+        node,
     }
 }
 
@@ -362,26 +355,39 @@ impl App {
         let mut cblocks = CBlocks::new();
 
         let node2 = nodes.insert(Node {
-            lines: vec![
-                text_line("ccc", false),
-            ],
+            lines: vec![],
             blocks: Default::default(),
             cblocks: Default::default(),
         });
 
+        splice_node_lines(node2, 0, 0, vec![
+                text_line("ccc", false),
+            ],
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+
         let node1 = nodes.insert(Node {
-            lines: vec![
+            lines: vec![],
+            blocks: Default::default(),
+            cblocks: Default::default(),
+        });
+        splice_node_lines(node1, 0, 0, vec![
                 text_line("aaaa", false),
                 node_line("node2", node2),
                 text_line("bbb", false),
             ],
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+
+        splice_node_lines(node2, 1, 1, vec![
+                node_line("recursion", node1),
+            ],
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+
+        let root_node = nodes.insert(Node {
+            lines: vec![],
             blocks: Default::default(),
             cblocks: Default::default(),
         });
-        nodes[node2].lines.push(node_line("recursion", node1));
-
-        let root_node = nodes.insert(Node {
-            lines: vec![
+        splice_node_lines(root_node, 0, 0, vec![
                 text_line("Stuff", false),
                 text_line("if name == '__main__':", true),
                 text_line("    print('hello')", true),
@@ -390,9 +396,8 @@ impl App {
                 node_line("zzz", node1),
                 text_line("Stuff.", false),
             ],
-            blocks: Default::default(),
-            cblocks: Default::default(),
-        });
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+
         let root_block = blocks.insert(Block {
             depth: 0,
             parent_idx: None,
