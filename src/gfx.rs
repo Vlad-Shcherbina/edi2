@@ -290,6 +290,30 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                     self.ctx.render_target.DrawRectangle(
                         &rect, self.ctx.text_brush.as_raw(), 1.0, null_mut());
                 }
+
+                let num_parents = nodes[blocks[b].node].parents.values().sum::<u32>();
+                if num_parents > 1 {
+                    for i in 0..num_parents - 1 {
+                        let yy = y + BULLET_OFFSET_Y + BULLET_SIZE * 0.5
+                            + 2.0 * (i as f32 - 0.5 * (num_parents - 2) as f32);
+                        let yy = yy.floor() + 0.5;
+                        unsafe {
+                            self.ctx.render_target.DrawLine(
+                                D2D1_POINT_2F {
+                                    x: 600.0,
+                                    y: yy,
+                                },
+                                D2D1_POINT_2F {
+                                    x: 630.0,
+                                    y: yy,
+                                },
+                                self.ctx.text_brush.as_raw(),
+                                1.0,  // stroke width,
+                                null_mut(),  // stroke style
+                            );
+                        }
+                    }
+                }
             }
         }
         if let Some(pos) = cur_pos {

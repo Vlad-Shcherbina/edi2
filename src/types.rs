@@ -39,6 +39,7 @@ pub struct Node {
     pub lines: Vec<LineWithLayout>,
     pub blocks: FnvHashSet<BlockKey>,
     pub cblocks: FnvHashSet<CBlockKey>,
+    pub parents: FnvHashMap<NodeKey, u32>,  // multiset
 }
 
 pub struct Block {

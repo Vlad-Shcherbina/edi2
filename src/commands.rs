@@ -700,6 +700,7 @@ impl App {
                 lines: vec![],
                 blocks: Default::default(),
                 cblocks: Default::default(),
+                parents: Default::default(),
             });
             splice_node_lines(
                 node, line_idx, line_idx + 1,

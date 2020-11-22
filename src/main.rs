@@ -358,6 +358,7 @@ impl App {
             lines: vec![],
             blocks: Default::default(),
             cblocks: Default::default(),
+            parents: Default::default(),
         });
 
         splice_node_lines(node2, 0, 0, vec![
@@ -369,6 +370,7 @@ impl App {
             lines: vec![],
             blocks: Default::default(),
             cblocks: Default::default(),
+            parents: Default::default(),
         });
         splice_node_lines(node1, 0, 0, vec![
                 text_line("aaaa", false),
@@ -386,6 +388,7 @@ impl App {
             lines: vec![],
             blocks: Default::default(),
             cblocks: Default::default(),
+            parents: Default::default(),
         });
         splice_node_lines(root_node, 0, 0, vec![
                 text_line("Stuff", false),

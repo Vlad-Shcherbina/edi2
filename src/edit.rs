@@ -112,11 +112,35 @@ pub fn splice_node_lines(
 ) -> Vec<Line> {
     let num_old_lines = end_line - start_line;
     let num_new_lines = lines.len();
+
+    for line in &lines {
+        match *line {
+            Line::Text { .. } => {}
+            Line::Node { node: child, .. } => {
+                *nodes[child].parents.entry(node).or_default() += 1;
+            }
+        }
+    }
+
     let old_lines = nodes[node].lines.splice(
         start_line..end_line,
         lines.into_iter().map(
             |line| LineWithLayout { line, layout: OnceCell::new() }));
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
+
+    for line in &old_lines {
+        match *line {
+            Line::Text { .. } => {}
+            Line::Node { node: child, .. } => {
+                let t = nodes[child].parents.remove(&node).unwrap();
+                assert!(t > 0);
+                let t = t - 1;
+                if t > 0 {
+                    nodes[child].parents.insert(node, t);
+                }
+            }
+        }
+    }
 
     undo_buf.push(Edit::SpliceNodeLines {
         node,
