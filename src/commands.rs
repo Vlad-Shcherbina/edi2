@@ -683,7 +683,12 @@ impl App {
     }
 
     pub fn put_char(&mut self, c: char) -> CmdResult {
-        assert!(self.cur.sel.is_none(), "TODO");
+        if self.cur.sel.is_some() {
+            return self.replace_selection_with(vec![Line::Text {
+                text: c.to_string(),
+                monospace: false,
+            }]);
+        }
 
         let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
 
@@ -745,7 +750,12 @@ impl App {
     }
 
     pub fn enter(&mut self) -> CmdResult {
-        assert!(self.cur.sel.is_none(), "TODO");
+        if self.cur.sel.is_some() {
+            return self.replace_selection_with(vec![
+                Line::Text { text: String::new(), monospace: false },
+                Line::Text { text: String::new(), monospace: false },
+            ]);
+        }
 
         let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
 
@@ -796,7 +806,10 @@ impl App {
     }
 
     pub fn backspace(&mut self) -> CmdResult {
-        assert!(self.cur.sel.is_none(), "TODO");
+        if self.cur.sel.is_some() {
+            return self.replace_selection_with(vec![
+                Line::Text { text: String::new(), monospace: false }]);
+        }
 
         let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
 
