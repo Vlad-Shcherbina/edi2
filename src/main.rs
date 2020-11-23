@@ -748,6 +748,27 @@ impl WindowProcState for App {
                     return None;
                 }
 
+                if ctrl_pressed && scan_code == 0x2d {  // Ctrl-X
+                    let (lines, plain_text) = app.copy();
+                    drop(app);
+
+                    let mut cm = ClipboardManager::open(hwnd);
+                    cm.empty(sr.reent());
+                    cm.set_private();
+                    cm.set_text(&plain_text);
+                    cm.close();
+                    let mut app = sr.state_mut();
+                    app.clipboard = Some(Clipboard {
+                        sequence_number: get_clipboard_sequence_number(),
+                        lines,
+                    });
+
+                    let res = app.replace_selection_with(
+                        vec![Line::Text { text: String::new(), monospace: false }]);
+                    res.process(hwnd, &mut app);
+                    return None;
+                }
+
                 if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
                     let (lines, plain_text) = app.copy();
                     drop(app);

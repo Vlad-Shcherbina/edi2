@@ -980,6 +980,10 @@ impl App {
     }
 
     pub fn paste(&mut self, lines: Vec<Line>) -> CmdResult {
+        self.replace_selection_with(lines)
+    }
+
+    pub fn replace_selection_with(&mut self, lines: Vec<Line>) -> CmdResult {
         let cur_line_pos = (self.cur.line, self.cur.pos);
         let sel_line_pos = match self.cur.sel.as_ref() {
             Some(sel) => (sel.line, sel.pos),
