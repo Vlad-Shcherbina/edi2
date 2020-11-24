@@ -694,24 +694,29 @@ impl WindowProcState for App {
                     }
                 }
             }
-            WM_KEYDOWN => {
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
                 let key_code = wparam as i32;
                 let scan_code = ((lparam >> 16) & 511) as i32;
                 let ctrl_pressed = unsafe { GetKeyState(VK_CONTROL) } as u16 & 0x8000 != 0;
                 let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
+                let alt_pressed = unsafe { GetKeyState(VK_MENU) } as u16 & 0x8000 != 0;
                 println!("{} key=0x{:02x}, scan=0x{:02x}", win_msg_name(msg), key_code, scan_code);
 
                 let mut app = sr.state_mut();
                 let cmd_res = match key_code {
                     VK_LEFT => Some(
-                        if shift_pressed {
+                        if alt_pressed {
+                            app.alt_left()
+                        } else if shift_pressed {
                             app.shift_left()
                         } else {
                             app.left()
                         }
                     ),
                     VK_RIGHT => Some(
-                        if shift_pressed {
+                        if alt_pressed {
+                            app.alt_right()
+                        } else if shift_pressed {
                             app.shift_right()
                         } else {
                             app.right()

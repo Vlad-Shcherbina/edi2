@@ -682,6 +682,91 @@ impl App {
         }
     }
 
+    pub fn alt_left(&mut self) -> CmdResult {
+        let blocks = &self.blocks;
+
+        let mut shift_line = match self.cur.sel.as_ref() {
+            Some(sel) => self.cur.line.min(sel.line),
+            None => self.cur.line,
+        };
+        let mut cur_block = self.cur.block;
+        let stepped_up = if shift_line == 0 {
+            match blocks[cur_block].parent_idx {
+                Some((p, i)) => {
+                    cur_block = p;
+                    shift_line = i;
+                }
+                None => panic!(),
+            }
+            true
+        } else { false };
+
+        assert!(shift_line > 0);
+
+        let (parent_block, pos_in_parent) = match blocks[cur_block].parent_idx {
+            Some((p, i)) => (p, i),
+            None => return CmdResult::nothing(),
+        };
+
+        let cur_node = blocks[cur_block].node;
+        let parent_node = blocks[parent_block].node;
+        if cur_node == parent_node {
+            println!("TODO: alt_left for self-referencing node");
+            return CmdResult::nothing();
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+
+        let lines = splice_node_lines(
+            cur_node, shift_line - 1, nodes[cur_node].lines.len(),
+            vec![],
+            blocks, cblocks, nodes,
+            &mut undo_group.edits);
+
+        assert!(pos_in_parent > 0);
+        splice_node_lines(
+            parent_node, pos_in_parent - 1 + 1, pos_in_parent - 1 + 1,
+            lines,
+            blocks, cblocks, nodes,
+            &mut undo_group.edits);
+
+        if stepped_up {
+            let child_block = match blocks[parent_block].children[pos_in_parent + 1] {
+                BlockChild::Leaf => panic!(),
+                BlockChild::Block(b) => b,
+            };
+            self.cur.block = child_block;
+            let mut need_expand = self.cur.line > 0;
+            if let Some(sel) = self.cur.sel.as_ref() {
+                if sel.line > 0 {
+                    need_expand = true;
+                }
+                // TODO: update anchor path or maybe clear it
+            }
+            if need_expand {
+                expand_block(child_block, blocks, cblocks, nodes);
+            }
+        } else {
+            self.cur.block = parent_block;
+            self.cur.line = self.cur.line - shift_line + pos_in_parent + 1;
+            if let Some(sel) = self.cur.sel.as_mut() {
+                sel.line = sel.line - shift_line + pos_in_parent + 1;
+                // TODO: update anchor path or maybe clear it
+            }
+        }
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        CmdResult::regular()
+    }
+
+    pub fn alt_right(&mut self) -> CmdResult {
+        println!("TODO: alt-right");
+        CmdResult::nothing()
+    }    
+
     pub fn put_char(&mut self, c: char) -> CmdResult {
         if self.cur.sel.is_some() {
             return self.replace_selection_with(vec![Line::Text {
