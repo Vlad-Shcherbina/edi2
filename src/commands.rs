@@ -973,11 +973,38 @@ impl App {
             return CmdResult::regular();            
         }
 
-        let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
-        let (prev_block, prev_idx) = match prev_leaf {
+        let pl = prev_leaf((self.cur.block, self.cur.line), blocks);
+        let (prev_block, prev_idx) = match pl {
             Some(x) => x,
             None => return CmdResult::nothing(),
         };
+
+        if text.is_empty() {
+            splice_node_lines(node,
+                line_idx, line_idx + 1, vec![],
+                blocks, cblocks, nodes,
+                &mut undo_group.edits);
+
+            // Recompute prev leaf in case it's self-referencing node:
+            // * rec
+            //   * rec
+            //     + rec
+            //     <empty>
+            //   |<empty>
+            let pl = prev_leaf((self.cur.block, self.cur.line), blocks);
+            let (prev_block, prev_idx) = match pl {
+                Some(x) => x,
+                None => panic!(),
+            };
+
+            self.cur.block = prev_block;
+            self.cur.line = prev_idx;
+            self.cur.pos = blocks[prev_block].max_pos(prev_idx, blocks, nodes);
+
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
+            return CmdResult::regular();
+        }
 
         if blocks[prev_block].depth > b.depth {
             if prev_idx == 0 && !blocks[prev_block].is_expanded() {
@@ -985,6 +1012,8 @@ impl App {
                 expand_block(prev_block, blocks, cblocks, nodes);
                 return CmdResult::regular();
             }
+            // TODO: if prev_block.node == cur_block.node,
+            // can't backspace, so just move cursor
         }
 
         let text = text.to_owned();
