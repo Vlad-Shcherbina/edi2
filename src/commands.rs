@@ -759,6 +759,7 @@ impl App {
             }
         }
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
         CmdResult::regular()
     }
 
