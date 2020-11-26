@@ -738,8 +738,106 @@ impl App {
     }
 
     pub fn alt_right(&mut self) -> CmdResult {
-        println!("TODO: alt-right");
-        CmdResult::nothing()
+        let blocks = &self.blocks;
+
+        let (mut first_shift_line, mut last_shift_line) = match self.cur.sel.as_ref() {
+            Some(sel) => (self.cur.line.min(sel.line), self.cur.line.max(sel.line)),
+            None => (self.cur.line, self.cur.line),
+        };
+        let mut cur_block = self.cur.block;
+        let mut pos_in_parent = None;
+        let stepped_up = if first_shift_line == 0 {
+            match blocks[cur_block].parent_idx {
+                Some((p, i)) => {
+                    cur_block = p;
+                    first_shift_line = i;
+                    last_shift_line = i;
+                    pos_in_parent = Some(i);
+                }
+                None => panic!(),
+            }
+            true
+        } else { false };
+
+        assert!(first_shift_line > 0);
+        let inner_line = (1..first_shift_line).rev()
+            .find(|&i| match blocks[cur_block].children[i] {
+                BlockChild::Leaf => false,
+                BlockChild::Block(_) => true,
+            });
+        let inner_line = match inner_line {
+            Some(c) => c,
+            None => {
+                return CmdResult::nothing();
+            }
+        };
+        first_shift_line = inner_line + 1;
+
+        let inner_block = match blocks[cur_block].children[inner_line] {
+            BlockChild::Leaf => panic!(),
+            BlockChild::Block(b) => b,
+        };
+
+        let cur_node = blocks[cur_block].node;
+        let inner_node = blocks[inner_block].node;
+        if cur_node == inner_node {
+            println!("alt-right for self-referencing node");
+            return CmdResult::nothing();
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+
+        if !blocks[inner_block].is_expanded() {
+            // TODO: silent autoexpand if it's one-line node
+            expand_block(inner_block, blocks, cblocks, nodes);
+            return CmdResult::regular();
+        }
+
+        let num_inner_lines = blocks[inner_block].children.len();
+
+        let lines = splice_node_lines(cur_node,
+            first_shift_line - 1, last_shift_line + 1 - 1, vec![],
+            blocks, cblocks, nodes,
+            &mut undo_group.edits);
+
+        splice_node_lines(inner_node,
+            num_inner_lines - 1, num_inner_lines - 1, lines,
+            blocks, cblocks, nodes,
+            &mut undo_group.edits);
+
+        if stepped_up {
+            let pos_in_parent = pos_in_parent.unwrap();
+            let i = pos_in_parent - first_shift_line + num_inner_lines;
+            let child_block = match blocks[inner_block].children[i] {
+                BlockChild::Leaf => panic!(),
+                BlockChild::Block(b) => b,
+            };
+            self.cur.block = child_block;
+            let mut need_expand = self.cur.line > 0;
+            if let Some(sel) = self.cur.sel.as_mut() {
+                if sel.line > 0 {
+                    need_expand = true;
+                }
+                sel.anchor_path.clear();
+            }
+            if need_expand {
+                expand_block(child_block, blocks, cblocks, nodes);
+            }
+        } else {
+            self.cur.block = inner_block;
+            self.cur.line = self.cur.line - first_shift_line + num_inner_lines;
+            if let Some(sel) = self.cur.sel.as_mut() {
+                sel.line = sel.line - first_shift_line + num_inner_lines;
+                sel.anchor_path.clear();
+            }
+        }
+
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
+        CmdResult::regular()
     }    
 
     pub fn put_char(&mut self, c: char) -> CmdResult {
