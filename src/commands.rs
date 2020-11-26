@@ -192,8 +192,6 @@ impl App {
             line,
             pos,
             anchor_path: vec![],
-            anchor_line: line,
-            anchor_pos: pos,
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
@@ -211,7 +209,7 @@ impl App {
                     if let Some(pos) = prev_char_pos(text, self.cur.pos) {
                         self.cur.pos = pos;
                         return CmdResult::regular();
-                    }                        
+                    }
                 }
             }
             if self.cur.block == self.root_block && self.cur.line == 1 {
@@ -228,9 +226,9 @@ impl App {
             self.cur.line = i;
             self.cur.pos = 0;
 
+            sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
             sel.pos = 1;
-            sel.anchor_path.push(i);
         } else {
             loop {
                 match blocks[self.cur.block].children[self.cur.line] {
@@ -258,29 +256,24 @@ impl App {
             }
 
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
-                if let Some(i) = sel.anchor_path.pop() {
-                    self.cur.block = match blocks[self.cur.block].children[i] {
+                if let Some((line, pos)) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = blocks[self.cur.block].children.len() - 1;
                     self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
-
-                    match sel.anchor_path.last() {
-                        Some(&i) => {
-                            sel.line = i;
-                            sel.pos = 0;
-                        }
-                        None => {
-                            sel.line = sel.anchor_line;
-                            sel.pos = sel.anchor_pos;
-                        }
-                    }
+                    sel.line = line;
+                    sel.pos = pos;
                 }
             }
 
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
                 self.cur.sel = None;
+                // Necessary because maybe we were at the block boundary,
+                // but didn't go inside because sel.anchor_path was cleared
+                // by, say, alt_left() or alt_right().
+                self.sink_cursor();
             }
         }
 
@@ -294,8 +287,6 @@ impl App {
             line,
             pos,
             anchor_path: vec![],
-            anchor_line: line,
-            anchor_pos: pos,
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
@@ -329,9 +320,9 @@ impl App {
             self.cur.block = parent;
             self.cur.line = i;
             self.cur.pos = 1;
+            sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
             sel.pos = 0;
-            sel.anchor_path.push(i);
         } else {
             loop {
                 match blocks[self.cur.block].children[self.cur.line] {
@@ -359,29 +350,24 @@ impl App {
             }
 
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
-                if let Some(i) = sel.anchor_path.pop() {
-                    self.cur.block = match blocks[self.cur.block].children[i] {
+                if let Some((line, pos)) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = 0;
                     self.cur.pos = 0;
-
-                    match sel.anchor_path.last() {
-                        Some(&i) => {
-                            sel.line = i;
-                            sel.pos = blocks[self.cur.block].max_pos(i, blocks, nodes);
-                        }
-                        None => {
-                            sel.line = sel.anchor_line;
-                            sel.pos = sel.anchor_pos;
-                        }
-                    }
+                    sel.line = line;
+                    sel.pos = pos;
                 }
             }
 
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
                 self.cur.sel = None;
+                // Necessary because maybe we were at the block boundary,
+                // but didn't go inside because sel.anchor_path was cleared
+                // by, say, alt_left() or alt_right().
+                self.sink_cursor();
             }
         }
 
@@ -475,8 +461,6 @@ impl App {
             line,
             pos,
             anchor_path: vec![],
-            anchor_line: line,
-            anchor_pos: pos,
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
@@ -522,9 +506,9 @@ impl App {
                 i - 1, (x, y),
                 &self.ctx, blocks, nodes);
 
+            sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
             sel.pos = 1;
-            sel.anchor_path.push(i);
         } else {
             assert!(self.cur.line > sel.line);
             self.cur.line -= 1;
@@ -532,23 +516,15 @@ impl App {
                 if sel.line < self.cur.line {
                     break;
                 }
-                if let Some(i) = sel.anchor_path.pop() {
-                    self.cur.block = match blocks[self.cur.block].children[i] {
+                assert_eq!(sel.line, self.cur.line);
+                if let Some((line, pos)) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = blocks[self.cur.block].children.len() - 1;
-
-                    match sel.anchor_path.last() {
-                        Some(&i) => {
-                            sel.line = i;
-                            sel.pos = 0;
-                        }
-                        None => {
-                            sel.line = sel.anchor_line;
-                            sel.pos = sel.anchor_pos;
-                        }
-                    }
+                    sel.line = line;
+                    sel.pos = pos;
                 } else {
                     break;
                 }
@@ -561,7 +537,11 @@ impl App {
                 self.cur.line, (x, y),
                 &self.ctx, blocks, nodes);
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
-               self.cur.sel = None;
+                self.cur.sel = None;
+                // Necessary because maybe we were at the block boundary,
+                // but didn't go inside because sel.anchor_path was cleared
+                // by, say, alt_left() or alt_right().
+                self.sink_cursor();
             }
         }
         CmdResult {
@@ -578,8 +558,6 @@ impl App {
             line,
             pos,
             anchor_path: vec![],
-            anchor_line: line,
-            anchor_pos: pos,
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
@@ -615,10 +593,10 @@ impl App {
                         repaint: true,
                         update_anchor_x: false,
                         class: CmdClass::Other,
-                    };  
+                    };
                 }
                 let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
-                sel.anchor_path.push(i);
+                sel.anchor_path.push((sel.line, sel.pos));
                 sel.line = i;
                 sel.pos = 0;
 
@@ -643,23 +621,15 @@ impl App {
                 if sel.line > self.cur.line {
                     break;
                 }
-                if let Some(i) = sel.anchor_path.pop() {
-                    self.cur.block = match blocks[self.cur.block].children[i] {
+                assert_eq!(sel.line, self.cur.line);
+                if let Some((line, pos)) = sel.anchor_path.pop() {
+                    self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = 0;
-
-                    match sel.anchor_path.last() {
-                        Some(&i) => {
-                            sel.line = i;
-                            sel.pos = blocks[self.cur.block].max_pos(i, blocks, nodes);
-                        }
-                        None => {
-                            sel.line = sel.anchor_line;
-                            sel.pos = sel.anchor_pos;
-                        }
-                    }
+                    sel.line = line;
+                    sel.pos = pos;
                 } else {
                     break;
                 }
@@ -672,7 +642,11 @@ impl App {
                 self.cur.line, (x, y),
                 &self.ctx, blocks, nodes);
             if self.cur.line == sel.line && self.cur.pos == sel.pos {
-               self.cur.sel = None;
+                self.cur.sel = None;
+                // Necessary because maybe we were at the block boundary,
+                // but didn't go inside because sel.anchor_path was cleared
+                // by, say, alt_left() or alt_right().
+                self.sink_cursor();
             }
         }
         CmdResult {
@@ -741,11 +715,11 @@ impl App {
             };
             self.cur.block = child_block;
             let mut need_expand = self.cur.line > 0;
-            if let Some(sel) = self.cur.sel.as_ref() {
+            if let Some(sel) = self.cur.sel.as_mut() {
                 if sel.line > 0 {
                     need_expand = true;
                 }
-                // TODO: update anchor path or maybe clear it
+                sel.anchor_path.clear();
             }
             if need_expand {
                 expand_block(child_block, blocks, cblocks, nodes);
@@ -755,7 +729,7 @@ impl App {
             self.cur.line = self.cur.line - shift_line + pos_in_parent + 1;
             if let Some(sel) = self.cur.sel.as_mut() {
                 sel.line = sel.line - shift_line + pos_in_parent + 1;
-                // TODO: update anchor path or maybe clear it
+                sel.anchor_path.clear();
             }
         }
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
@@ -1007,6 +981,7 @@ impl App {
             return CmdResult::regular();
         }
 
+        #[allow(clippy::collapsible_if)]
         if blocks[prev_block].depth > b.depth {
             if prev_idx == 0 && !blocks[prev_block].is_expanded() {
                 // TODO: silent autoexpand if it's one-line node

@@ -94,9 +94,7 @@ pub struct Sel {
     line: usize,
     pos: usize,
 
-    anchor_path: Vec<usize>,
-    anchor_line: usize,
-    anchor_pos: usize,
+    anchor_path: Vec<(usize, usize)>,
 }
 
 struct Clipboard {
