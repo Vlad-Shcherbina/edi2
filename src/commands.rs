@@ -922,21 +922,7 @@ impl App {
             return res;
         }
 
-        let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
-        let (prev_block, prev_idx) = match prev_leaf {
-            Some(x) => x,
-            None => return CmdResult::nothing(),
-        };
-
-        if blocks[prev_block].depth > b.depth {
-            if prev_idx == 0 && !blocks[prev_block].is_expanded() {
-                // TODO: silent autoexpand if it's one-line node
-                expand_block(prev_block, blocks, cblocks, nodes);
-                return CmdResult::regular();
-            }
-        } else if prev_block != self.cur.block {
-            assert_eq!(self.cur.line, 0);
-
+        if self.cur.line == 0 {
             let (parent_block, idx_in_parent) = b.parent_idx.unwrap();
             let mut ancestor = parent_block;
             loop {
@@ -984,7 +970,21 @@ impl App {
             self.cur.pos = 0;
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
-            return CmdResult::regular();
+            return CmdResult::regular();            
+        }
+
+        let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
+        let (prev_block, prev_idx) = match prev_leaf {
+            Some(x) => x,
+            None => return CmdResult::nothing(),
+        };
+
+        if blocks[prev_block].depth > b.depth {
+            if prev_idx == 0 && !blocks[prev_block].is_expanded() {
+                // TODO: silent autoexpand if it's one-line node
+                expand_block(prev_block, blocks, cblocks, nodes);
+                return CmdResult::regular();
+            }
         }
 
         let text = text.to_owned();
