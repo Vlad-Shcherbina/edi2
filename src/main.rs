@@ -1,3 +1,6 @@
+// uncomment for release
+// #![windows_subsystem = "windows"]  // prevent console
+
 #![feature(bindings_after_at)]
 #![feature(untagged_unions)]
 #![feature(backtrace)]
@@ -862,6 +865,7 @@ impl WindowProcState for App {
 static STATIC_HWND: AtomicPtr<HWND__> = AtomicPtr::new(null_mut());
 static PANICKING: AtomicBool = AtomicBool::new(false);
 
+#[allow(dead_code)]
 fn panic_hook(pi: &std::panic::PanicInfo) {
     PANICKING.store(true, Ordering::SeqCst);
     let payload: &str = 
@@ -903,7 +907,9 @@ fn panic_hook(pi: &std::panic::PanicInfo) {
 }
 
 fn main() {
-    std::panic::set_hook(Box::new(panic_hook));
+    // uncomment for release
+    // std::panic::set_hook(Box::new(panic_hook));
+
     let app = LazyState::new(|hwnd| {
         STATIC_HWND.store(hwnd, Ordering::SeqCst);
         App::new(hwnd)
