@@ -1098,8 +1098,12 @@ impl App {
                 expand_block(prev_block, blocks, cblocks, nodes);
                 return CmdResult::regular();
             }
-            // TODO: if prev_block.node == cur_block.node,
-            // can't backspace, so just move cursor
+            if blocks[prev_block].node == blocks[self.cur.block].node {
+                self.cur.block = prev_block;
+                self.cur.line = prev_idx;
+                self.cur.pos = blocks[prev_block].max_pos(prev_idx, blocks, nodes);
+                return CmdResult::regular();
+            }
         }
 
         let text = text.to_owned();
