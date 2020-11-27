@@ -13,6 +13,7 @@ pub enum CmdClass {
 pub struct CmdResult {
     pub repaint: bool,
     pub update_anchor_x: bool,
+    pub scroll_to_reveal_cursor: bool,
     pub class: CmdClass,
 }
 
@@ -21,6 +22,7 @@ impl CmdResult {
         CmdResult {
             repaint: false,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: false,
             class: CmdClass::Other,
         }
     }
@@ -28,6 +30,7 @@ impl CmdResult {
         CmdResult {
             repaint: true,
             update_anchor_x: true,
+            scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
         }
     }
@@ -55,6 +58,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: false,
             class: CmdClass::Other,
         }
     }
@@ -409,6 +413,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
         }
     }
@@ -450,6 +455,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
         }
     }
@@ -474,6 +480,7 @@ impl App {
                 return CmdResult {
                     repaint: true,
                     update_anchor_x: false,
+                    scroll_to_reveal_cursor: true,
                     class: CmdClass::Other,
                 };                
             }
@@ -490,6 +497,7 @@ impl App {
                 return CmdResult {
                     repaint: true,
                     update_anchor_x: false,
+                    scroll_to_reveal_cursor: true,
                     class: CmdClass::Other,
                 };
             }
@@ -547,6 +555,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
         }
     }
@@ -577,6 +586,7 @@ impl App {
                 return CmdResult {
                     repaint: true,
                     update_anchor_x: false,
+                    scroll_to_reveal_cursor: true,
                     class: CmdClass::Other,
                 };
             }
@@ -592,6 +602,7 @@ impl App {
                     return CmdResult {
                         repaint: true,
                         update_anchor_x: false,
+                        scroll_to_reveal_cursor: true,
                         class: CmdClass::Other,
                     };
                 }
@@ -652,6 +663,7 @@ impl App {
         CmdResult {
             repaint: true,
             update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
         }
     }

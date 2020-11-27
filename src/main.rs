@@ -166,6 +166,20 @@ impl CmdResult {
         if self.update_anchor_x {
             app.update_anchor();
         }
+
+        if self.scroll_to_reveal_cursor {
+            let rc = get_client_rect(hwnd);
+            let height = (rc.bottom - rc.top) as f32;
+
+            let cc = app.blocks[app.cur.block].abs_cursor_coord(
+                app.cur.line, app.cur.pos, &app.ctx, &app.blocks, &app.nodes);
+            if app.y_offset + cc.top < 0.0 {
+                app.y_offset = -cc.top;
+            } else if app.y_offset + cc.top + cc.height > height {
+                app.y_offset = height - cc.top - cc.height;
+            }
+        }
+
         dbg!(self.class);
         app.last_cmd_class = self.class;
         std::mem::forget(self);

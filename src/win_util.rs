@@ -80,6 +80,13 @@ pub fn load_cursor(cursor_name: LPCWSTR) -> HCURSOR {
     res
 }
 
+pub fn get_client_rect(hwnd: HWND) -> RECT {
+    let mut rc: RECT = unsafe { std::mem::zeroed() };
+    let res = unsafe { GetClientRect(hwnd, &mut rc) };
+    assert!(res != 0, "{}", Error::last_os_error());
+    rc
+}
+
 pub fn create_d2d_factory() -> ComPtr<ID2D1Factory> {
     unsafe {
         let factory_options = D2D1_FACTORY_OPTIONS {
@@ -123,9 +130,7 @@ pub fn create_hwnd_render_target(d2d_factory: &ComPtr<ID2D1Factory>, hwnd: HWND)
             usage: D2D1_RENDER_TARGET_USAGE_NONE,
             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
         };
-        let mut rc: RECT = std::mem::zeroed();
-        let res = GetClientRect(hwnd, &mut rc);
-        assert!(res != 0, "{}", Error::last_os_error());
+        let rc = get_client_rect(hwnd);
         let hwnd_render_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
             hwnd,
             pixelSize: D2D1_SIZE_U {

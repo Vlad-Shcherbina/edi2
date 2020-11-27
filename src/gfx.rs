@@ -361,6 +361,28 @@ impl Block {
         let cc = self.cursor_coord(idx, pos, ctx, blocks, nodes);
         X_OFFSET + self.depth as f32 * INDENT + cc.x
     }
+
+    pub(crate) fn abs_cursor_coord(
+        &self, idx: usize, pos: usize,
+        ctx: &AppCtx,
+        blocks: &Blocks, nodes: &Nodes,
+    ) -> CursorCoord {
+        let mut cc = self.cursor_coord(idx, pos, ctx, blocks, nodes);
+        cc.x += X_OFFSET + self.depth as f32 * INDENT;
+
+        for child in 0..idx {
+            cc.top += self.child_size(child, ctx, blocks, nodes).1;
+        }
+
+        let mut b = self;
+        while let Some((p, i)) = b.parent_idx {
+            b = &blocks[p];
+            for child in 0..i {
+                cc.top += b.child_size(child, ctx, blocks, nodes).1;
+            }
+        }
+        cc
+    }
 }
 
 pub enum MouseResult {
