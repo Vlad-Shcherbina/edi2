@@ -490,6 +490,10 @@ impl App {
         self.cur.line = *wp.path.last().unwrap();
         self.cur.pos = wp.pos;
         self.cur.sel = None;
+
+        // It is possible that we recorded cursor position
+        // with selection, and we din't restore selection.
+        self.sink_cursor();
     }
 
     fn check(&self) {
