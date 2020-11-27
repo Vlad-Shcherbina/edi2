@@ -1,5 +1,6 @@
 #![feature(bindings_after_at)]
 #![feature(untagged_unions)]
+#![feature(backtrace)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::too_many_arguments)]
 
@@ -14,6 +15,7 @@ pub mod edit;
 mod commands;
 
 use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
 use winapi::shared::minwindef::*;
@@ -605,11 +607,13 @@ fn paint(app: &mut App) {
 }
 
 impl WindowProcState for App {
-    #[allow(unused_variables)]
     fn window_proc(
         mut sr: StateRef<Self>,
         hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM,
     )-> Option<LRESULT> {
+        if PANICKING.load(Ordering::SeqCst) {
+            return None;
+        }
         match msg {
             WM_DESTROY => {
                 eprintln!("{}", win_msg_name(msg));
@@ -855,8 +859,55 @@ impl WindowProcState for App {
     }
 }
 
+static STATIC_HWND: AtomicPtr<HWND__> = AtomicPtr::new(null_mut());
+static PANICKING: AtomicBool = AtomicBool::new(false);
+
+fn panic_hook(pi: &std::panic::PanicInfo) {
+    PANICKING.store(true, Ordering::SeqCst);
+    let payload: &str = 
+        if let Some(&s) = pi.payload().downcast_ref::<&str>() {
+            s
+        } else if let Some(s) = pi.payload().downcast_ref::<String>() {
+            &s
+        } else {
+            ""
+        };
+    let loc = match pi.location() {
+        Some(loc) => format!("{}:{}:{}", loc.file(), loc.line(), loc.column()),
+        None => "location unknown".to_owned()
+    };
+
+    // (anchor:aIMTMDTQfJDYrJxa)
+    let exe = std::env::current_exe().unwrap();
+    let exe_dir = exe.parent().unwrap();
+    dbg!(&exe_dir);
+    std::env::set_current_dir(exe_dir).unwrap();
+
+    let bt = std::backtrace::Backtrace::force_capture();
+    let message = format!(
+        "panicked at {:?}, {}\nstack backtrace:\n{}",
+        payload, loc, bt);
+    eprintln!("{}", message);
+    std::fs::write("crash.txt", message).unwrap();
+
+    unsafe {
+        use wio::wide::ToWide as _;
+        MessageBoxW(
+            STATIC_HWND.load(Ordering::SeqCst),
+            "see crash.txt".to_wide_null().as_ptr(),
+            "programming error".to_wide_null().as_ptr(),
+            MB_OK | MB_ICONERROR);
+    }
+
+    std::process::exit(1);  
+}
+
 fn main() {
-    let app = LazyState::new(App::new);
+    std::panic::set_hook(Box::new(panic_hook));
+    let app = LazyState::new(|hwnd| {
+        STATIC_HWND.store(hwnd, Ordering::SeqCst);
+        App::new(hwnd)
+    });
     unsafe {
         let win_class = win_win::WindowClass::builder("e2 class")
             .build().unwrap();

@@ -29,3 +29,9 @@ features = [
 
 [features]
 clippy = []  # https://github.com/rust-lang/cargo/issues/8075#issuecomment-610259732
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

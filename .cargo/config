@@ -1,0 +1,9 @@
+[build]
+# https://www.reddit.com/r/rust/comments/b0ybui/how_to_have_backtrace_log_on_production/
+# But this is not enough, since, according to
+# https://docs.microsoft.com/en-us/windows/desktop/api/dbghelp/nf-dbghelp-syminitialize,
+# this path is relative to current work directory.
+# So one has to change work directory to exe base dir before calling
+# backtrace::Backtrace::new()
+# (anchor:aIMTMDTQfJDYrJxa)
+rustflags = ["-C", "link-args=/PDBALTPATH:%_PDB%"]
