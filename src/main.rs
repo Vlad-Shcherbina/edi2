@@ -19,6 +19,7 @@ mod commands;
 
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use fnv::FnvHashSet;
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
 use winapi::shared::minwindef::*;
@@ -145,12 +146,46 @@ impl UndoGroupBuilder {
     }
 }
 
+pub struct Unsaved {
+    cur: bool,  // cursor and scroll position.
+    tree: bool,
+    nodes: FnvHashSet<NodeKey>,
+    // Unsaved nodes imply unsaved tree.
+    // Unsaved tree implies unsaved cur.
+}
+
+impl Unsaved {
+    fn new() -> Self {
+        Unsaved {
+            cur: false,
+            tree: false,
+            nodes: Default::default(),
+        }
+    }
+}
+
+impl std::fmt::Display for Unsaved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if !self.nodes.is_empty() {
+            write!(f, "* ({})", self.nodes.len())
+        } else if self.tree {
+            write!(f, "+")
+        } else if self.cur {
+            write!(f, "_")
+        } else {
+            Ok(())
+        }
+    }
+}
+
 struct App {
     ctx: AppCtx,
 
     nodes: Nodes,
     blocks: Blocks,
     cblocks: CBlocks,
+
+    unsaved: Unsaved,
 
     undo_buf: Vec<UndoGroup>,
     redo_buf: Vec<UndoGroup>,
@@ -167,6 +202,10 @@ impl CmdResult {
     fn process(self, hwnd: HWND, app: &mut App) {
         if self.repaint {
             invalidate_rect(hwnd);
+
+            // For simplicity we don't track changes to cursor
+            // everywhere they are made.
+            app.unsaved.cur = true;
         }
         if self.update_anchor_x {
             app.update_anchor();
@@ -185,6 +224,10 @@ impl CmdResult {
             }
         }
 
+        // TODO: if unsaved.* is false, check that it matches DB content
+
+        set_window_title(hwnd, &format!("e2{}", app.unsaved));
+
         dbg!(self.class);
         app.last_cmd_class = self.class;
         std::mem::forget(self);
@@ -200,11 +243,13 @@ struct Waypoint {
 fn expand_block(
     block: BlockKey,
     blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
+    unsaved: &mut Unsaved,
 ) {
     let b = &mut blocks[block];
     assert!(!b.is_expanded());
     let cforest = b.collapsed.take().unwrap();
     push_block_children_from_cforest(block, cforest, blocks, cblocks, nodes);
+    unsaved.tree = true;
 }
 
 fn destroy_block(
@@ -381,7 +426,8 @@ impl App {
         splice_node_lines(node2, 0, 0, vec![
                 text_line("ccc", false),
             ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
+            &mut Unsaved::new());
 
         let node1 = nodes.insert(Node {
             lines: vec![],
@@ -394,12 +440,14 @@ impl App {
                 node_line("node2", node2),
                 text_line("bbb", false),
             ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
+            &mut Unsaved::new());
 
         splice_node_lines(node2, 1, 1, vec![
                 node_line("recursion", node1),
             ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
+            &mut Unsaved::new());
 
         let root_node = nodes.insert(Node {
             lines: vec![],
@@ -416,7 +464,8 @@ impl App {
                 node_line("zzz", node1),
                 text_line("Stuff.", false),
             ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![]);
+            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
+            &mut Unsaved::new());
 
         let root_block = blocks.insert(Block {
             depth: 0,
@@ -427,14 +476,20 @@ impl App {
         });
         nodes[root_node].blocks.insert(root_block);
 
-        expand_block(root_block, &mut blocks, &mut cblocks, &mut nodes);
-        expand_block(*nodes[node1].blocks.iter().next().unwrap(), &mut blocks, &mut cblocks, &mut nodes);
+        expand_block(root_block,
+            &mut blocks, &mut cblocks, &mut nodes,
+            &mut Unsaved::new());
+        expand_block(
+            *nodes[node1].blocks.iter().next().unwrap(),
+            &mut blocks, &mut cblocks, &mut nodes,
+            &mut Unsaved::new());
 
         let mut app = App {
             ctx,
             nodes,
             blocks,
             cblocks,
+            unsaved: Unsaved::new(),
             undo_buf: vec![],
             redo_buf: vec![],
             last_cmd_class: CmdClass::Other,
@@ -477,7 +532,7 @@ impl App {
         assert!(!wp.path.is_empty());
         for i in 0..wp.path.len() {
             if wp.path[i] > 0 && !blocks[b].is_expanded() {
-                expand_block(b, blocks, cblocks, nodes);
+                expand_block(b, blocks, cblocks, nodes, &mut self.unsaved);
             }
             if i < wp.path.len() - 1 {
                 b = match blocks[b].children[wp.path[i]] {
@@ -710,7 +765,7 @@ impl WindowProcState for App {
                         let cmd_res = if blocks[block].is_expanded() {
                             app.collapse_block(block)
                         } else {
-                            expand_block(block, blocks, cblocks, nodes);
+                            expand_block(block, blocks, cblocks, nodes, &mut app.unsaved);
                             CmdResult::regular()
                         };
                         cmd_res.process(hwnd, app);

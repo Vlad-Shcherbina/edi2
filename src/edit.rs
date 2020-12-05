@@ -1,6 +1,7 @@
 use fnv::FnvHashSet;
 use once_cell::unsync::OnceCell;
 use crate::types::*;
+use crate::Unsaved;
 
 pub enum Edit {
     SpliceLineText {
@@ -21,6 +22,7 @@ pub enum Edit {
 pub fn apply_edit(e: Edit,
     blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
     undo_buf: &mut Vec<Edit>,
+    unsaved: &mut Unsaved,
 ) {
     match e {
         Edit::SpliceLineText {
@@ -32,7 +34,7 @@ pub fn apply_edit(e: Edit,
                 node, line_idx,
                 start_pos, end_pos,
                 &substring,
-                nodes, undo_buf);
+                nodes, undo_buf, unsaved);
         }
         Edit::SpliceNodeLines {
             node,
@@ -41,7 +43,7 @@ pub fn apply_edit(e: Edit,
         } => {
             splice_node_lines(
                 node, start_line, end_line, lines,
-                blocks, cblocks, nodes, undo_buf);
+                blocks, cblocks, nodes, undo_buf, unsaved);
         }
     }
 }
@@ -52,7 +54,10 @@ pub fn splice_line_text(
     substring: &str,
     nodes: &mut Nodes,
     undo_buf: &mut Vec<Edit>,
+    unsaved: &mut Unsaved,
 ) -> String {
+    unsaved.nodes.insert(node);
+
     let line = &mut nodes[node].lines[line_idx];
     let text = line.line.text_mut();
 
@@ -109,7 +114,10 @@ pub fn splice_node_lines(
     lines: Vec<Line>,
     blocks: &mut Blocks, cblocks: &mut CBlocks, nodes: &mut Nodes,
     undo_buf: &mut Vec<Edit>,
+    unsaved: &mut Unsaved,
 ) -> Vec<Line> {
+    unsaved.nodes.insert(node);
+
     let num_old_lines = end_line - start_line;
     let num_new_lines = lines.len();
 

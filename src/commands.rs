@@ -68,6 +68,7 @@ impl App {
         let nodes = &self.nodes;
 
         assert!(blocks[block].is_expanded());
+        self.unsaved.tree = true;
         if blocks[block].depth <= blocks[self.cur.block].depth {
             let mut b = self.cur.block;
             while blocks[block].depth < blocks[b].depth {
@@ -711,14 +712,16 @@ impl App {
             cur_node, shift_line - 1, nodes[cur_node].lines.len(),
             vec![],
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         assert!(pos_in_parent > 0);
         splice_node_lines(
             parent_node, pos_in_parent - 1 + 1, pos_in_parent - 1 + 1,
             lines,
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         if stepped_up {
             let child_block = match blocks[parent_block].children[pos_in_parent + 1] {
@@ -734,7 +737,7 @@ impl App {
                 sel.anchor_path.clear();
             }
             if need_expand {
-                expand_block(child_block, blocks, cblocks, nodes);
+                expand_block(child_block, blocks, cblocks, nodes, &mut self.unsaved);
             }
         } else {
             self.cur.block = parent_block;
@@ -804,7 +807,7 @@ impl App {
 
         if !blocks[inner_block].is_expanded() {
             // TODO: silent autoexpand if it's one-line node
-            expand_block(inner_block, blocks, cblocks, nodes);
+            expand_block(inner_block, blocks, cblocks, nodes, &mut self.unsaved);
             return CmdResult::regular();
         }
 
@@ -813,12 +816,14 @@ impl App {
         let lines = splice_node_lines(cur_node,
             first_shift_line - 1, last_shift_line + 1 - 1, vec![],
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         splice_node_lines(inner_node,
             num_inner_lines - 1, num_inner_lines - 1, lines,
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         if stepped_up {
             let pos_in_parent = pos_in_parent.unwrap();
@@ -836,7 +841,7 @@ impl App {
                 sel.anchor_path.clear();
             }
             if need_expand {
-                expand_block(child_block, blocks, cblocks, nodes);
+                expand_block(child_block, blocks, cblocks, nodes, &mut self.unsaved);
             }
         } else {
             self.cur.block = inner_block;
@@ -881,7 +886,8 @@ impl App {
                 node, line_idx, line_idx + 1,
                 vec![Line::Node { local_header, node: new_node }],
                 blocks, &mut self.cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
             let new_block = match blocks[self.cur.block].children[self.cur.line] {
                 BlockChild::Leaf => unreachable!(),
                 BlockChild::Block(b) => b,
@@ -899,7 +905,8 @@ impl App {
             node,
             line_idx, self.cur.pos, self.cur.pos,
             &c.to_string(),
-            nodes, &mut undo_group.edits);
+            nodes, &mut undo_group.edits,
+            &mut self.unsaved);
         self.cur.pos += c.len_utf8();
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
@@ -934,7 +941,7 @@ impl App {
         let nodes = &mut self.nodes;
 
         if self.cur.line == 0 && !blocks[self.cur.block].is_expanded() {
-            expand_block(self.cur.block, blocks, cblocks, nodes);
+            expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
         }
 
         let b = &blocks[self.cur.block];
@@ -945,13 +952,15 @@ impl App {
             node, line_idx,
             self.cur.pos, end_pos,
             "",
-            nodes, &mut undo_group.edits);
+            nodes, &mut undo_group.edits,
+            &mut self.unsaved);
 
         if self.cur.line == 0 {
             splice_node_lines(b.node, 0, 0, 
                 vec![Line::Text { text: tail, monospace: false }],
                 blocks, cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
         } else {
             let monospace = match nodes[node].lines[line_idx].line {
                 Line::Text { monospace, .. } => monospace,
@@ -960,7 +969,8 @@ impl App {
             splice_node_lines(b.node, line_idx + 1, line_idx + 1,
                 vec![Line::Text { text: tail, monospace }],
                 blocks, cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
         }
         self.cur.line += 1;
         self.cur.pos = 0;
@@ -994,7 +1004,7 @@ impl App {
         if let Some(prev_pos) = prev_char_pos(text, self.cur.pos) {
             splice_line_text(node, line_idx,
                 prev_pos, self.cur.pos, "",
-                nodes, &mut undo_group.edits);
+                nodes, &mut undo_group.edits, &mut self.unsaved);
             self.cur.pos = prev_pos;
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
@@ -1023,7 +1033,7 @@ impl App {
 
             if !b.is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
-                expand_block(self.cur.block, blocks, cblocks, nodes);
+                expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
                 return CmdResult::regular();
             }
 
@@ -1032,7 +1042,8 @@ impl App {
                 0, nodes[blocks[self.cur.block].node].lines.len(),
                 vec![],
                 blocks, cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
 
             assert!(idx_in_parent > 0);
             let parent_node = blocks[parent_block].node;
@@ -1049,7 +1060,8 @@ impl App {
                 idx_in_parent - 1, idx_in_parent,
                 lines,
                 blocks, cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
             self.cur.pos = 0;
@@ -1068,7 +1080,8 @@ impl App {
             splice_node_lines(node,
                 line_idx, line_idx + 1, vec![],
                 blocks, cblocks, nodes,
-                &mut undo_group.edits);
+                &mut undo_group.edits,
+                &mut self.unsaved);
 
             // Recompute prev leaf in case it's self-referencing node:
             // * rec
@@ -1095,7 +1108,7 @@ impl App {
         if blocks[prev_block].depth > b.depth {
             if prev_idx == 0 && !blocks[prev_block].is_expanded() {
                 // TODO: silent autoexpand if it's one-line node
-                expand_block(prev_block, blocks, cblocks, nodes);
+                expand_block(prev_block, blocks, cblocks, nodes, &mut self.unsaved);
                 return CmdResult::regular();
             }
             if blocks[prev_block].node == blocks[self.cur.block].node {
@@ -1112,7 +1125,7 @@ impl App {
         let prev_text_len = nodes[prev_node].lines[prev_line_idx].line.text().len();
         splice_line_text(prev_node, prev_line_idx,
             prev_text_len, prev_text_len, &text,
-            nodes, &mut undo_group.edits);
+            nodes, &mut undo_group.edits, &mut self.unsaved);
 
         self.cur.block = prev_block;
         self.cur.line = prev_idx;
@@ -1120,7 +1133,8 @@ impl App {
         splice_node_lines(
             node, line_idx, line_idx + 1, vec![],
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
@@ -1142,7 +1156,7 @@ impl App {
         if blocks[self.cur.block].is_expanded() {
             self.collapse_block(self.cur.block)
         } else {
-            expand_block(self.cur.block, blocks, cblocks, nodes);
+            expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
             CmdResult::regular()
         }
     }
@@ -1281,9 +1295,9 @@ impl App {
             };
             splice_line_text(node_key, node_line,
                 0, header_len, &new_header_text,
-                nodes, &mut undo_group.edits);
+                nodes, &mut undo_group.edits, &mut self.unsaved);
             if self.cur.line > 0 && !blocks[self.cur.block].is_expanded() {
-                expand_block(self.cur.block, blocks, cblocks, nodes);
+                expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
             }
             line1 + 1
         } else {
@@ -1295,7 +1309,8 @@ impl App {
             node_key,
             line1 - 1, line2 + 1 - 1, new_lines,
             blocks, cblocks, nodes,
-            &mut undo_group.edits);
+            &mut undo_group.edits,
+            &mut self.unsaved);
 
         self.sink_cursor();
 
@@ -1313,7 +1328,10 @@ impl App {
         if let Some(mut g) = buf1.pop() {
             let mut redo_group = UndoGroupBuilder::new(g.cur_after);
             while let Some(edit) = g.edits.pop() {
-                apply_edit(edit, blocks, cblocks, nodes, &mut redo_group.edits);
+                apply_edit(edit,
+                    blocks, cblocks, nodes,
+                    &mut redo_group.edits,
+                    &mut self.unsaved);
             }
             self.set_cur_to_waypoint(&g.cur_before);
             let redo_group = redo_group.finish(g.cur_before);
