@@ -27,6 +27,15 @@ pub struct LineWithLayout {
     pub layout: OnceCell<TextLayout>,
 }
 
+impl LineWithLayout {
+    pub fn new(line: Line) -> Self {
+        LineWithLayout {
+            line,
+            layout: OnceCell::new(),
+        }
+    }
+}
+
 impl std::fmt::Debug for LineWithLayout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LineWithLayout")
@@ -40,6 +49,7 @@ pub struct Node {
     pub blocks: FnvHashSet<BlockKey>,
     pub cblocks: FnvHashSet<CBlockKey>,
     pub parents: FnvHashMap<NodeKey, u32>,  // multiset
+    pub db_key: i64,
 }
 
 pub struct Block {

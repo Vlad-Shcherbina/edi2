@@ -16,6 +16,7 @@ mod util;
 pub mod types;
 pub mod edit;
 mod commands;
+mod storage;
 
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};

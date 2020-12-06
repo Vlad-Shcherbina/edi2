@@ -14,6 +14,7 @@ pub fn create_empty_node(nodes: &mut Nodes) -> NodeKey {
         blocks: Default::default(),
         cblocks: Default::default(),
         parents: Default::default(),
+        db_key: -1,  // TODO
     })
 }
 
@@ -146,8 +147,7 @@ pub fn splice_node_lines(
 
     let old_lines = nodes[node].lines.splice(
         start_line..end_line,
-        lines.into_iter().map(
-            |line| LineWithLayout { line, layout: OnceCell::new() }));
+        lines.into_iter().map(LineWithLayout::new));
     let old_lines: Vec<Line> = old_lines.map(|line| line.line).collect();
 
     for line in &old_lines {
