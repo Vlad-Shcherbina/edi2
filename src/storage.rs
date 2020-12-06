@@ -2,6 +2,7 @@
 
 use std::convert::TryFrom;
 use fnv::FnvHashMap;
+use rusqlite::{Transaction, params, OptionalExtension};
 use crate::*;
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -197,5 +198,172 @@ impl DiskCur {
             anchor_x: 0.0,
             sel: None,
         }
+    }
+}
+
+pub struct AppInit {
+    pub blocks: Blocks,
+    pub cblocks: CBlocks,
+    pub nodes: Nodes,
+    pub db_key_to_node_key: FnvHashMap<i64, NodeKey>,
+    pub root_block: BlockKey,
+    pub cur: Cur,
+    pub y_offset: f32
+}
+
+pub fn load_or_create(tx: &Transaction) -> AppInit {
+    // Misc table entries:
+    //   version: "1"
+    //   tree: ...
+    //   cur: ...
+    //   root_node: i64
+    tx.execute_batch("
+        CREATE TABLE IF NOT EXISTS
+        misc (
+            key TEXT NOT NULL PRIMARY KEY,
+            data BLOB
+        );
+
+        CREATE TABLE IF NOT EXISTS
+        node (
+            key INTEGER PRIMARY KEY,
+            data BLOB
+        )
+    ").unwrap();
+    let version: Option<String> = tx
+        .prepare("SELECT data FROM misc WHERE key = 'version'").unwrap()
+        .query_row(params![], |row| row.get(0))
+        .optional().unwrap();
+
+    match version {
+        None => {
+            println!("Initializing new db");
+            let tree = DiskBlock {
+                expanded: true,
+                children: vec![],
+            };
+            let tree = bincode::serialize(&tree).unwrap();
+            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('tree', ?)")
+                .unwrap()
+                .execute(params![tree])
+                .unwrap();
+
+            let cur = DiskCur {
+                path: vec![],
+                line: 1,
+                pos: 0,
+                y_offset: 0.0,
+            };
+            let cur = bincode::serialize(&cur).unwrap();
+            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('cur', ?)")
+                .unwrap()
+                .execute(params![cur])
+                .unwrap();
+
+            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('root_node', 1)")
+                .unwrap()
+                .execute(params![])
+                .unwrap();
+
+            let node = DiskNode {
+                lines: vec![DiskLine::Text { text: String::new(), monospace: false }],
+            };
+            let node = bincode::serialize(&node).unwrap();
+            tx.prepare("INSERT OR ABORT INTO node (key, data) VALUES (1, ?)")
+                .unwrap()
+                .execute(params![node])
+                .unwrap();
+        }
+        Some(version) => assert_eq!(version, "1"),
+    }
+
+    let mut nodes = Nodes::new();
+    let mut blocks = Blocks::new();
+    let mut cblocks = CBlocks::new();
+
+    let db_key_to_node_key: FnvHashMap<i64, NodeKey> =
+        tx.prepare("SELECT key FROM node").unwrap()
+        .query_map(params![], |row| {
+            let key: i64 = row.get(0)?;
+            let n = nodes.insert(Node {
+                lines: vec![],
+                parents: Default::default(),
+                blocks: Default::default(),
+                cblocks: Default::default(),
+                db_key: -1,
+            });
+            Ok((key, n))
+        })
+        .unwrap().map(Result::unwrap).collect();
+    tx.prepare("SELECT key, data FROM node").unwrap()
+    .query_map(params![], |row| {
+        let key: i64 = row.get(0)?;
+        let data = row.get_raw(1).as_blob()?;
+        let node: DiskNode = bincode::deserialize(data).unwrap();
+        let node = node.into(key, &db_key_to_node_key);
+        nodes[db_key_to_node_key[&key]] = node;
+        Ok(())
+    })
+    .unwrap().for_each(Result::unwrap);
+
+    for &node in db_key_to_node_key.values() {
+        let num_lines = nodes[node].lines.len();
+        for i in 0..num_lines {
+            match nodes[node].lines[i].line {
+                Line::Text { .. } => {}
+                Line::Node { node: child, .. } =>
+                    *nodes[child].parents.entry(node).or_default() += 1,
+            }
+        }
+    }
+
+    let root_node: i64 =
+        tx.prepare("SELECT data FROM misc WHERE key = 'root_node'").unwrap()
+        .query_row(params![], |row| row.get(0)).unwrap();
+    let root_node = db_key_to_node_key[&root_node];
+
+    let tree: Vec<u8> =
+        tx.prepare("SELECT data FROM misc WHERE key = 'tree'").unwrap()
+        .query_row(params![], |row| row.get(0))
+        .unwrap();
+    let tree: DiskBlock = bincode::deserialize(&tree).unwrap();
+
+    let tree = tree.into_cblock(root_node, &mut cblocks, &mut nodes);
+    let was_there = nodes[root_node].cblocks.remove(&tree);
+    assert!(was_there);
+    let tree = cblocks.remove(tree);
+    assert!(tree.expanded);
+
+    let root_block = blocks.insert(Block {
+        parent_idx: None,
+        depth: 0,
+        node: root_node,
+        children: vec![BlockChild::Leaf],
+        collapsed: Some(tree.children),
+    });
+    let was_new = nodes[root_node].blocks.insert(root_block);
+    assert!(was_new);
+
+    expand_block(
+        root_block,
+        &mut blocks, &mut cblocks, &mut nodes,
+        &mut Unsaved::new());
+
+    let cur: Vec<u8> =
+        tx.prepare("SELECT data FROM misc WHERE key = 'cur'").unwrap()
+        .query_row(params![], |row| row.get(0))
+        .unwrap();
+    let cur: DiskCur = bincode::deserialize(&cur).unwrap();
+    let y_offset = cur.y_offset;
+    let cur = cur.into(root_block, &blocks);
+
+    AppInit {
+        nodes,
+        blocks,
+        cblocks,
+        db_key_to_node_key,
+        root_block,
+        cur,
+        y_offset,
     }
 }

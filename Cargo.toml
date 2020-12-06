@@ -8,6 +8,7 @@ fnv = "*"
 once_cell = "*"
 serde = { version = "*", features = ["derive"] }
 bincode = "*"
+rusqlite = { version = "*", features = ["bundled"] }
 win-win = "*"
 wio = "*"
 win-msg-name = "*"

@@ -20,7 +20,7 @@ mod storage;
 
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-use fnv::FnvHashSet;
+use fnv::{FnvHashSet, FnvHashMap};
 use wio::com::ComPtr;
 use winapi::shared::windef::*;
 use winapi::shared::minwindef::*;
@@ -189,6 +189,8 @@ struct App {
     nodes: Nodes,
     blocks: Blocks,
     cblocks: CBlocks,
+
+    db_key_to_node_key: FnvHashMap<i64, NodeKey>,
 
     unsaved: Unsaved,
     last_command_time: std::time::Instant,
@@ -402,101 +404,39 @@ fn push_block_children_from_cforest(
     assert!(cforest.0.is_empty());
 }
 
-fn text_line(text: &str, monospace: bool) -> Line {
-    Line::Text {
-        text: text.to_owned(),
-        monospace,
-    }
-}
-fn node_line(local_header: &str, node: NodeKey) -> Line {
-    Line::Node {
-        local_header: local_header.to_owned(),
-        node,
-    }
-}
-
 impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
 
-        let mut nodes = Nodes::new();
-        let mut blocks = Blocks::new();
-        let mut cblocks = CBlocks::new();
-
-        let node2 = create_empty_node(&mut nodes);
-        splice_node_lines(node2, 0, 0, vec![
-                text_line("ccc", false),
-            ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
-            &mut Unsaved::new());
-
-        let node1 = create_empty_node(&mut nodes);
-        splice_node_lines(node1, 0, 0, vec![
-                text_line("aaaa", false),
-                node_line("node2", node2),
-                text_line("bbb", false),
-            ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
-            &mut Unsaved::new());
-
-        splice_node_lines(node2, 1, 1, vec![
-                node_line("recursion", node1),
-            ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
-            &mut Unsaved::new());
-
-        let root_node = create_empty_node(&mut nodes);
-        splice_node_lines(root_node, 0, 0, vec![
-                text_line("Stuff", false),
-                text_line("if name == '__main__':", true),
-                text_line("    print('hello')", true),
-                text_line("Stuff...", false),
-                node_line("zzz", node1),
-                node_line("zzz", node1),
-                text_line("Stuff.", false),
-            ],
-            &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
-            &mut Unsaved::new());
-
-        let root_block = blocks.insert(Block {
-            depth: 0,
-            parent_idx: None,
-            node: root_node,
-            collapsed: Some(CForest::new()),
-            children: vec![BlockChild::Leaf],
-        });
-        nodes[root_node].blocks.insert(root_block);
-
-        expand_block(root_block,
-            &mut blocks, &mut cblocks, &mut nodes,
-            &mut Unsaved::new());
-        expand_block(
-            *nodes[node1].blocks.iter().next().unwrap(),
-            &mut blocks, &mut cblocks, &mut nodes,
-            &mut Unsaved::new());
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let tx = conn.transaction().unwrap();
+        let storage::AppInit {
+            nodes, blocks, cblocks,
+            db_key_to_node_key,
+            root_block,
+            cur,
+            y_offset,
+        } = storage::load_or_create(&tx);
+        tx.commit().unwrap();
 
         let mut app = App {
             ctx,
             nodes,
             blocks,
             cblocks,
+            db_key_to_node_key,
             unsaved: Unsaved::new(),
             last_command_time: std::time::Instant::now(),
             undo_buf: vec![],
             redo_buf: vec![],
             last_cmd_class: CmdClass::Other,
-            cur: Cur {
-                block: root_block,
-                line: 1,
-                pos: 0,
-                anchor_x: 0.0,
-                sel: None,
-            },
+            cur,
             root_block,
-            y_offset: 10.0,
+            y_offset,
             clipboard: None,
         };
         app.update_anchor();
+        app.check();
         app
     }
 
@@ -671,6 +611,7 @@ impl WindowProcState for App {
         match msg {
             WM_DESTROY => {
                 eprintln!("{}", win_msg_name(msg));
+                // TODO: also save changes
                 unsafe {
                     PostQuitMessage(0);
                 }
