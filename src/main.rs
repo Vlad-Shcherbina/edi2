@@ -793,6 +793,8 @@ impl WindowProcState for App {
                         }
                     ),
                     VK_BACK => Some(app.backspace()),
+                    VK_HOME => Some(app.home()),
+                    VK_END => Some(app.end()),
                     _ => None
                 };
                 if let Some(cmd_res) = cmd_res {

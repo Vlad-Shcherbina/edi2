@@ -855,7 +855,20 @@ impl App {
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
         CmdResult::regular()
-    }    
+    }
+
+    pub fn home(&mut self) -> CmdResult {
+        self.sink_cursor();
+        self.cur.pos = 0;
+        CmdResult::regular()
+    }
+
+    pub fn end(&mut self) -> CmdResult {
+        self.sink_cursor();
+        let b = &self.blocks[self.cur.block];
+        self.cur.pos = b.max_pos(self.cur.line, &self.blocks, &self.nodes);
+        CmdResult::regular()
+    }
 
     pub fn put_char(&mut self, c: char) -> CmdResult {
         if self.cur.sel.is_some() {
