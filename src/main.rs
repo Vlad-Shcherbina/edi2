@@ -441,6 +441,7 @@ impl App {
             y_offset,
             clipboard: None,
         };
+        app.sink_cursor();
         app.update_anchor();
         app.check();
         app
