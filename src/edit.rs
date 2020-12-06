@@ -3,6 +3,20 @@ use once_cell::unsync::OnceCell;
 use crate::types::*;
 use crate::Unsaved;
 
+
+// Note that this operation is not a part of Edit enum,
+// because we don't undo it. Nodes are never explicitly
+// deleted. Instead, they become unreachable, and maybe
+// garbage-collected (though currently it's not done).
+pub fn create_empty_node(nodes: &mut Nodes) -> NodeKey {
+    nodes.insert(Node {
+        lines: vec![],
+        blocks: Default::default(),
+        cblocks: Default::default(),
+        parents: Default::default(),
+    })
+}
+
 pub enum Edit {
     SpliceLineText {
         node: NodeKey,

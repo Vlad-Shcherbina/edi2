@@ -422,25 +422,14 @@ impl App {
         let mut blocks = Blocks::new();
         let mut cblocks = CBlocks::new();
 
-        let node2 = nodes.insert(Node {
-            lines: vec![],
-            blocks: Default::default(),
-            cblocks: Default::default(),
-            parents: Default::default(),
-        });
-
+        let node2 = create_empty_node(&mut nodes);
         splice_node_lines(node2, 0, 0, vec![
                 text_line("ccc", false),
             ],
             &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
             &mut Unsaved::new());
 
-        let node1 = nodes.insert(Node {
-            lines: vec![],
-            blocks: Default::default(),
-            cblocks: Default::default(),
-            parents: Default::default(),
-        });
+        let node1 = create_empty_node(&mut nodes);
         splice_node_lines(node1, 0, 0, vec![
                 text_line("aaaa", false),
                 node_line("node2", node2),
@@ -455,12 +444,7 @@ impl App {
             &mut blocks, &mut cblocks, &mut nodes, &mut vec![],
             &mut Unsaved::new());
 
-        let root_node = nodes.insert(Node {
-            lines: vec![],
-            blocks: Default::default(),
-            cblocks: Default::default(),
-            parents: Default::default(),
-        });
+        let root_node = create_empty_node(&mut nodes);
         splice_node_lines(root_node, 0, 0, vec![
                 text_line("Stuff", false),
                 text_line("if name == '__main__':", true),
