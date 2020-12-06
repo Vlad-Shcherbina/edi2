@@ -162,6 +162,10 @@ impl Unsaved {
             nodes: Default::default(),
         }
     }
+
+    fn has_changes(&self) -> bool {
+        self.cur || self.tree || !self.nodes.is_empty()
+    }
 }
 
 impl std::fmt::Display for Unsaved {
@@ -186,6 +190,7 @@ struct App {
     cblocks: CBlocks,
 
     unsaved: Unsaved,
+    last_command_time: std::time::Instant,
 
     undo_buf: Vec<UndoGroup>,
     redo_buf: Vec<UndoGroup>,
@@ -224,6 +229,7 @@ impl CmdResult {
             }
         }
 
+        app.last_command_time = std::time::Instant::now();
         // TODO: if unsaved.* is false, check that it matches DB content
 
         set_window_title(hwnd, &format!("e2{}", app.unsaved));
@@ -490,6 +496,7 @@ impl App {
             blocks,
             cblocks,
             unsaved: Unsaved::new(),
+            last_command_time: std::time::Instant::now(),
             undo_buf: vec![],
             redo_buf: vec![],
             last_cmd_class: CmdClass::Other,
@@ -908,6 +915,17 @@ impl WindowProcState for App {
                     app.tab().process(hwnd, &mut app);
                 }
             }
+            WM_TIMER => {
+                // println!("{}", win_msg_name(msg));
+                let mut app = sr.state_mut();
+                if app.unsaved.has_changes() &&
+                   app.last_command_time.elapsed().as_secs_f64() > 3.0 {
+                    println!("simulated save");
+                    // TODO: actually save
+                    app.unsaved = Unsaved::new();
+                    set_window_title(hwnd, &format!("e2{}", app.unsaved));
+                }
+            }
             WM_DESTROYCLIPBOARD => {
                 println!("{}", win_msg_name(msg));
                 let sn = get_clipboard_sequence_number();
@@ -971,6 +989,7 @@ fn main() {
 
     let app = LazyState::new(|hwnd| {
         STATIC_HWND.store(hwnd, Ordering::SeqCst);
+        set_timer(hwnd, 123, 1000);
         App::new(hwnd)
     });
     unsafe {

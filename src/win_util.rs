@@ -34,6 +34,14 @@ use wio::com::ComPtr;
 use crate::win_win_reent::Reent;
 
 
+pub fn set_timer(hwnd: HWND, id: usize, interval_ms: u32) -> usize {
+    let res = unsafe {
+        SetTimer(hwnd, id, interval_ms, None)
+    };
+    assert!(res != 0, "{}", Error::last_os_error());
+    res
+}
+
 pub fn set_window_title(hwnd: HWND, title: &str) {
     let res = unsafe {
         SetWindowTextW(hwnd, title.to_wide_null().as_ptr())
