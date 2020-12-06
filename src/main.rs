@@ -190,6 +190,7 @@ struct App {
     blocks: Blocks,
     cblocks: CBlocks,
 
+    conn: rusqlite::Connection,
     db_key_to_node_key: FnvHashMap<i64, NodeKey>,
 
     unsaved: Unsaved,
@@ -408,7 +409,11 @@ impl App {
     fn new(hwnd: HWND) -> Self {
         let ctx = AppCtx::new(hwnd);
 
-        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let exe_dir = exe.parent().unwrap();
+        let db_path = exe_dir.join("notes.db");
+
+        let mut conn = rusqlite::Connection::open(db_path).unwrap();
         let tx = conn.transaction().unwrap();
         let storage::AppInit {
             nodes, blocks, cblocks,
@@ -424,6 +429,7 @@ impl App {
             nodes,
             blocks,
             cblocks,
+            conn,
             db_key_to_node_key,
             unsaved: Unsaved::new(),
             last_command_time: std::time::Instant::now(),
@@ -438,6 +444,37 @@ impl App {
         app.update_anchor();
         app.check();
         app
+    }
+
+    fn save_changes(&mut self, hwnd: HWND) {
+        assert!(self.unsaved.has_changes());
+        println!("Saving...");
+        let nodes = &self.nodes;
+        let blocks = &self.blocks;
+        let cblocks = &self.cblocks;
+
+        let tx = self.conn.transaction().unwrap();
+        for &node in &self.unsaved.nodes {
+            let db_key = nodes[node].db_key;
+            println!("  saving node {:?} (db key {})", node, db_key);
+            assert_eq!(self.db_key_to_node_key[&db_key], node);
+            let dn = storage::DiskNode::from(&nodes[node], nodes);
+            storage::save_node(db_key, &dn, &tx);
+        }
+        if self.unsaved.tree || !self.unsaved.nodes.is_empty() {
+            println!("  saving tree");
+            let dt = storage::DiskBlock::from_block(self.root_block, blocks, cblocks);
+            storage::save_tree(&dt, &tx);
+        }
+        if self.unsaved.cur || self.unsaved.tree || !self.unsaved.nodes.is_empty() {
+            println!("  saving cur");
+            let dc = storage::DiskCur::from(&self.cur, blocks, self.y_offset);
+            storage::save_cur(&dc, &tx);
+        }
+        tx.commit().unwrap();
+
+        self.unsaved = Unsaved::new();
+        set_window_title(hwnd, &format!("e2{}", self.unsaved));
     }
 
     fn cur_waypoint(&self) -> Waypoint {
@@ -527,6 +564,10 @@ impl App {
         if let Some(sel) = self.cur.sel.as_ref() {
             assert_ne!((self.cur.line, self.cur.pos), (sel.line, sel.pos));
         }
+
+        // TODO: check for all reachable nodes:
+        //  - parent consistency
+        //  - db_key consistency
     }
 
     fn update_anchor(&mut self) {
@@ -611,7 +652,10 @@ impl WindowProcState for App {
         match msg {
             WM_DESTROY => {
                 eprintln!("{}", win_msg_name(msg));
-                // TODO: also save changes
+                let app = &mut *sr.state_mut();
+                if app.unsaved.has_changes() {
+                    app.save_changes(hwnd);
+                }
                 unsafe {
                     PostQuitMessage(0);
                 }
@@ -846,10 +890,7 @@ impl WindowProcState for App {
                 let mut app = sr.state_mut();
                 if app.unsaved.has_changes() &&
                    app.last_command_time.elapsed().as_secs_f64() > 3.0 {
-                    println!("simulated save");
-                    // TODO: actually save
-                    app.unsaved = Unsaved::new();
-                    set_window_title(hwnd, &format!("e2{}", app.unsaved));
+                    app.save_changes(hwnd);
                 }
             }
             WM_DESTROYCLIPBOARD => {

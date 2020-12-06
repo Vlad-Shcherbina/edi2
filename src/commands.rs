@@ -876,7 +876,8 @@ impl App {
         if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with('*') {
             let local_header = text[1..].to_owned();
             let blocks = &mut self.blocks;
-            let new_node = create_empty_node(nodes);
+            let new_node = create_empty_node(
+                nodes, &mut self.db_key_to_node_key, &mut self.unsaved);
             splice_node_lines(
                 node, line_idx, line_idx + 1,
                 vec![Line::Node { local_header, node: new_node }],

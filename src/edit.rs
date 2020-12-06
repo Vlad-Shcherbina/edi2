@@ -1,4 +1,4 @@
-use fnv::FnvHashSet;
+use fnv::{FnvHashSet, FnvHashMap};
 use once_cell::unsync::OnceCell;
 use crate::types::*;
 use crate::Unsaved;
@@ -8,14 +8,25 @@ use crate::Unsaved;
 // because we don't undo it. Nodes are never explicitly
 // deleted. Instead, they become unreachable, and maybe
 // garbage-collected (though currently it's not done).
-pub fn create_empty_node(nodes: &mut Nodes) -> NodeKey {
-    nodes.insert(Node {
+pub fn create_empty_node(
+    nodes: &mut Nodes,
+    db_key_to_node_key: &mut FnvHashMap<i64, NodeKey>,
+    unsaved: &mut Unsaved,
+) -> NodeKey {
+    let mut db_key = db_key_to_node_key.len() as i64;
+    while db_key_to_node_key.contains_key(&db_key) {
+        db_key += 1;
+    }
+    let node = nodes.insert(Node {
         lines: vec![],
         blocks: Default::default(),
         cblocks: Default::default(),
         parents: Default::default(),
-        db_key: -1,  // TODO
-    })
+        db_key,
+    });
+    db_key_to_node_key.insert(db_key, node);
+    unsaved.nodes.insert(node);
+    node
 }
 
 pub enum Edit {

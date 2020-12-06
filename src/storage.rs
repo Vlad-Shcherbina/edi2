@@ -1,11 +1,10 @@
-#![allow(dead_code)]  // TODO: remove
-
 use std::convert::TryFrom;
 use fnv::FnvHashMap;
 use rusqlite::{Transaction, params, OptionalExtension};
 use crate::*;
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq)]
 enum DiskLine {
     Text {
         text: String,
@@ -46,12 +45,13 @@ impl DiskLine {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct DiskNode {
+#[derive(Debug, PartialEq)]
+pub struct DiskNode {
     lines: Vec<DiskLine>,
 }
 
 impl DiskNode {
-    fn from(node: &Node, nodes: &Nodes) -> Self {
+    pub fn from(node: &Node, nodes: &Nodes) -> Self {
         let lines = node.lines.iter()
             .map(|line| DiskLine::from(&line.line, nodes))
             .collect();
@@ -77,7 +77,8 @@ impl DiskNode {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct DiskBlock {
+#[derive(Debug, PartialEq)]
+pub struct DiskBlock {
     expanded: bool,
     children: Vec<(u32, DiskBlock)>,
     // Same as in CForest:
@@ -86,7 +87,7 @@ struct DiskBlock {
 }
 
 impl DiskBlock {
-    fn from_block(b: BlockKey, blocks: &Blocks, cblocks: &CBlocks) -> Self {
+    pub fn from_block(b: BlockKey, blocks: &Blocks, cblocks: &CBlocks) -> Self {
         let b = &blocks[b];
         match &b.collapsed {
             Some(cforest) => DiskBlock {
@@ -141,7 +142,8 @@ impl DiskBlock {
         let children: FnvHashMap<usize, CBlockKey> = self.children.into_iter()
             .map(|(line, child)| {
                 let line = usize::try_from(line).unwrap();
-                let child_node = match nodes[node].lines[line].line {
+                assert!(line > 0);
+                let child_node = match nodes[node].lines[line - 1].line {
                     Line::Text { .. } => panic!(),
                     Line::Node { node, .. } => node,
                 };
@@ -159,7 +161,8 @@ impl DiskBlock {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct DiskCur {
+#[derive(Debug, PartialEq)]
+pub struct DiskCur {
     path: Vec<usize>,
     line: usize,
     pos: usize,
@@ -167,7 +170,7 @@ struct DiskCur {
 }
 
 impl DiskCur {
-    fn from(cur: &Cur, blocks: &Blocks, y_offset: f32) -> Self {
+    pub fn from(cur: &Cur, blocks: &Blocks, y_offset: f32) -> Self {
         let mut path = Vec::new();
         let mut b = cur.block;
         while let Some((parent, idx)) = blocks[b].parent_idx {
@@ -199,6 +202,36 @@ impl DiskCur {
             sel: None,
         }
     }
+}
+
+pub fn save_cur(cur: &DiskCur, tx: &Transaction) {
+    let data = bincode::serialize(cur).unwrap();
+    let cur2: DiskCur = bincode::deserialize(&data).unwrap();
+    assert_eq!(*cur, cur2);
+    tx.prepare("INSERT OR REPLACE INTO misc (key, data) VALUES ('cur', ?)")
+        .unwrap()
+        .execute(params![data])
+        .unwrap();
+}
+
+pub fn save_tree(tree: &DiskBlock, tx: &Transaction) {
+    let data = bincode::serialize(tree).unwrap();
+    let tree2: DiskBlock = bincode::deserialize(&data).unwrap();
+    assert_eq!(*tree, tree2);
+    tx.prepare("INSERT OR REPLACE INTO misc (key, data) VALUES ('tree', ?)")
+        .unwrap()
+        .execute(params![data])
+        .unwrap();
+}
+
+pub fn save_node(db_key: i64, node: &DiskNode, tx: &Transaction) {
+    let data = bincode::serialize(node).unwrap();
+    let node2: DiskNode = bincode::deserialize(&data).unwrap();
+    assert_eq!(*node, node2);
+    tx.prepare("INSERT OR REPLACE INTO node (key, data) VALUES (?, ?)")
+        .unwrap()
+        .execute(params![db_key, data])
+        .unwrap();
 }
 
 pub struct AppInit {
@@ -238,15 +271,17 @@ pub fn load_or_create(tx: &Transaction) -> AppInit {
     match version {
         None => {
             println!("Initializing new db");
+
+            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('version', '1')")
+                .unwrap()
+                .execute(params![])
+                .unwrap();
+
             let tree = DiskBlock {
                 expanded: true,
                 children: vec![],
             };
-            let tree = bincode::serialize(&tree).unwrap();
-            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('tree', ?)")
-                .unwrap()
-                .execute(params![tree])
-                .unwrap();
+            save_tree(&tree, tx);
 
             let cur = DiskCur {
                 path: vec![],
@@ -254,11 +289,7 @@ pub fn load_or_create(tx: &Transaction) -> AppInit {
                 pos: 0,
                 y_offset: 0.0,
             };
-            let cur = bincode::serialize(&cur).unwrap();
-            tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('cur', ?)")
-                .unwrap()
-                .execute(params![cur])
-                .unwrap();
+            save_cur(&cur, tx);
 
             tx.prepare("INSERT OR ABORT INTO misc (key, data) VALUES ('root_node', 1)")
                 .unwrap()
@@ -268,11 +299,7 @@ pub fn load_or_create(tx: &Transaction) -> AppInit {
             let node = DiskNode {
                 lines: vec![DiskLine::Text { text: String::new(), monospace: false }],
             };
-            let node = bincode::serialize(&node).unwrap();
-            tx.prepare("INSERT OR ABORT INTO node (key, data) VALUES (1, ?)")
-                .unwrap()
-                .execute(params![node])
-                .unwrap();
+            save_node(1, &node, tx);
         }
         Some(version) => assert_eq!(version, "1"),
     }
