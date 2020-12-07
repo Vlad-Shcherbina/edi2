@@ -1,5 +1,5 @@
-// uncomment for release
-// #![windows_subsystem = "windows"]  // prevent console
+#![cfg_attr(feature = "product",
+    windows_subsystem = "windows")]  // prevent console
 
 #![feature(bindings_after_at)]
 #![feature(untagged_unions)]
@@ -954,8 +954,20 @@ fn panic_hook(pi: &std::panic::PanicInfo) {
 }
 
 fn main() {
-    // uncomment for release
-    // std::panic::set_hook(Box::new(panic_hook));
+    #[cfg(feature="product")]
+    std::panic::set_hook(Box::new(panic_hook));
+
+    #[cfg(not(feature="product"))]
+    {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |pi| {
+            // (anchor:aIMTMDTQfJDYrJxa)
+            let exe = std::env::current_exe().unwrap();
+            let exe_dir = exe.parent().unwrap();
+            std::env::set_current_dir(exe_dir).unwrap();
+            default_hook(pi)
+        }));
+    }
 
     let app = LazyState::new(|hwnd| {
         STATIC_HWND.store(hwnd, Ordering::SeqCst);
