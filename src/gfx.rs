@@ -250,11 +250,19 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                         }
                     }
 
+                    let brush = if idx == 0 {
+                        assert!(b.depth > 0);
+                        let brushes = &self.ctx.header_rainbow_brushes;
+                        brushes[(b.depth - 1) as usize % brushes.len()].as_raw()
+                    } else {
+                        self.ctx.text_brush.as_raw()
+                    };
+
                     unsafe {
                         self.ctx.render_target.DrawTextLayout(
                             D2D1_POINT_2F { x, y },
                             layout.raw.as_raw(),
-                            self.ctx.text_brush.as_raw(),
+                            brush,
                             D2D1_DRAW_TEXT_OPTIONS_NONE);
                     }                
                 }

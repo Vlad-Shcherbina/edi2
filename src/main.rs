@@ -51,6 +51,7 @@ struct AppCtx {
     text_brush: ComPtr<ID2D1Brush>,
     cursor_brush: ComPtr<ID2D1Brush>,
     sel_brush: ComPtr<ID2D1Brush>,
+    header_rainbow_brushes: Vec<ComPtr<ID2D1Brush>>,
 }
 
 impl AppCtx {
@@ -72,6 +73,21 @@ impl AppCtx {
         let sel_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.3, g: 0.3, b: 0.4, a: 1.0 });
 
+        let header_rainbow_brushes = vec![
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 0.9, g: 1.0, b: 0.8, a: 1.0 }),
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 0.9, g: 0.9, b: 1.0, a: 1.0 }),
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 1.0, g: 0.9, b: 0.8, a: 1.0 }),
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 0.8, g: 1.0, b: 1.0, a: 1.0 }),
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 0.8, a: 1.0 }),
+            create_solid_brush(
+                &render_target, &D2D1_COLOR_F { r: 1.0, g: 0.9, b: 1.0, a: 1.0 }),
+        ];
+
         AppCtx {
             arrow_cursor,
             hand_cursor,
@@ -85,6 +101,7 @@ impl AppCtx {
             text_brush,
             cursor_brush,
             sel_brush,
+            header_rainbow_brushes,
         }        
     }
 }
