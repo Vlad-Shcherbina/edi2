@@ -292,11 +292,16 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                 };
                 unsafe {
                     if !blocks[b].is_expanded() {
+                        let fill_brush = if nodes[blocks[b].node].lines.is_empty() {
+                            self.ctx.one_liner_bullet_fill_brush.as_raw()
+                        } else {
+                            self.ctx.bullet_brush.as_raw()
+                        };
                         self.ctx.render_target.FillRectangle(
-                            &rect, self.ctx.text_brush.as_raw());
+                            &rect, fill_brush);
                     }
                     self.ctx.render_target.DrawRectangle(
-                        &rect, self.ctx.text_brush.as_raw(), 1.0, null_mut());
+                        &rect, self.ctx.bullet_brush.as_raw(), 1.0, null_mut());
                 }
 
                 let num_parents = nodes[blocks[b].node].parents.values().sum::<u32>();

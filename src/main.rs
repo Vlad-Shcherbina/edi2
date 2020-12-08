@@ -52,6 +52,8 @@ struct AppCtx {
     cursor_brush: ComPtr<ID2D1Brush>,
     sel_brush: ComPtr<ID2D1Brush>,
     header_rainbow_brushes: Vec<ComPtr<ID2D1Brush>>,
+    bullet_brush: ComPtr<ID2D1Brush>,
+    one_liner_bullet_fill_brush: ComPtr<ID2D1Brush>,
 }
 
 impl AppCtx {
@@ -72,6 +74,11 @@ impl AppCtx {
             &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
         let sel_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.3, g: 0.3, b: 0.4, a: 1.0 });
+
+        let bullet_brush = create_solid_brush(
+            &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
+        let one_liner_bullet_fill_brush = create_solid_brush(
+            &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 0.4 });
 
         let header_rainbow_brushes = vec![
             create_solid_brush(
@@ -102,6 +109,9 @@ impl AppCtx {
             cursor_brush,
             sel_brush,
             header_rainbow_brushes,
+
+            bullet_brush,
+            one_liner_bullet_fill_brush,
         }        
     }
 }
