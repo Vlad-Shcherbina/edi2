@@ -870,6 +870,43 @@ impl App {
         CmdResult::regular()
     }
 
+    pub fn shift_home(&mut self) -> CmdResult {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+        });
+
+        self.cur.pos = 0;
+
+        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            self.cur.sel = None;
+            self.sink_cursor();
+        }
+        CmdResult::regular()
+    }
+
+    pub fn shift_end(&mut self) -> CmdResult {
+        let line = self.cur.line;
+        let pos = self.cur.pos;
+        let sel = self.cur.sel.get_or_insert_with(|| Sel {
+            line,
+            pos,
+            anchor_path: vec![],
+        });
+
+        let b = &self.blocks[self.cur.block];
+        self.cur.pos = b.max_pos(self.cur.line, &self.blocks, &self.nodes);
+
+        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            self.cur.sel = None;
+            self.sink_cursor();
+        }
+        CmdResult::regular()
+    }
+
     pub fn put_char(&mut self, c: char) -> CmdResult {
         if self.cur.sel.is_some() {
             return self.replace_selection_with(vec![Line::Text {
