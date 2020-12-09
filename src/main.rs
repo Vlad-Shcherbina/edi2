@@ -834,6 +834,11 @@ impl WindowProcState for App {
                             app.end()
                         }
                     ),
+                    VK_RETURN => if alt_pressed {
+                        Some(app.alt_enter())
+                    } else {
+                        None
+                    }
                     _ => None
                 };
                 if let Some(cmd_res) = cmd_res {
@@ -926,6 +931,13 @@ impl WindowProcState for App {
                 if c == '\t' {
                     app.tab().process(hwnd, &mut app);
                 }
+            }
+            WM_SYSCHAR => {
+                println!("{}", win_msg_name(msg));
+                // Prevents annoying bell on unreckognized keys like Alt-Enter.
+                // As a side effect, disables stuff like Alt-F to open file menu,
+                // but we don't care about that.
+                return Some(0);
             }
             WM_TIMER => {
                 // println!("{}", win_msg_name(msg));

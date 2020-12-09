@@ -1031,6 +1031,71 @@ impl App {
         res
     }
 
+    pub fn alt_enter(&mut self) -> CmdResult {
+        if self.cur.sel.is_some() {
+            // TODO
+            return CmdResult::nothing();
+        }
+        if self.cur.line != 0 {
+            // TODO
+            return CmdResult::nothing();
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &blocks[self.cur.block];
+
+        // let expanded = b.is_expanded() || nodes[b.node].lines.is_empty();
+
+        let new_node = create_empty_node(
+            nodes, &mut self.db_key_to_node_key, &mut self.unsaved);
+
+        let (parent_block, idx_in_parent) = b.parent_idx.unwrap();
+        assert!(idx_in_parent > 0);
+
+        if self.cur.pos == b.max_pos(0, blocks, nodes) &&
+           (!b.is_expanded() || nodes[b.node].lines.is_empty()) {
+            // There is nothing after the cursor in this block.
+            // Create new bullet after.
+            splice_node_lines(
+                blocks[parent_block].node,
+                idx_in_parent - 1 + 1, idx_in_parent - 1 + 1,
+                vec![Line::Node { local_header: String::new(), node: new_node }],
+                blocks, &mut self.cblocks, nodes,
+                &mut undo_group.edits,
+                &mut self.unsaved);
+            self.cur.block = match blocks[parent_block].children[idx_in_parent + 1] {
+                BlockChild::Leaf => panic!(),
+                BlockChild::Block(b) => b,
+            };
+            self.cur.line = 0;
+            self.cur.pos = 0;
+        } else {
+            // Create new bullet before.
+            let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+            let prefix = splice_line_text(node, line_idx,
+                0, self.cur.pos, "",
+                nodes,
+                &mut undo_group.edits,
+                &mut self.unsaved);
+            splice_node_lines(
+                blocks[parent_block].node,
+                idx_in_parent - 1, idx_in_parent - 1,
+                vec![Line::Node { local_header: prefix, node: new_node }],
+                blocks, &mut self.cblocks, nodes,
+                &mut undo_group.edits,
+                &mut self.unsaved);
+            self.cur.pos = 0;
+        }
+
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
+        CmdResult::regular()
+    }
+
     pub fn backspace(&mut self) -> CmdResult {
         if self.cur.sel.is_some() {
             return self.replace_selection_with(vec![
