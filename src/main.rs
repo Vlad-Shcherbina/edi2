@@ -669,6 +669,67 @@ fn paint(app: &mut App) {
     }
 }
 
+fn cut(hwnd: HWND, mut sr: StateRef<App>) {
+    let mut app = sr.state_mut();
+    let (lines, plain_text) = app.copy();
+    drop(app);
+
+    let mut cm = ClipboardManager::open(hwnd);
+    cm.empty(sr.reent());
+    cm.set_private();
+    cm.set_text(&plain_text);
+    cm.close();
+    let mut app = sr.state_mut();
+    app.clipboard = Some(Clipboard {
+        sequence_number: get_clipboard_sequence_number(),
+        lines,
+    });
+
+    let res = app.replace_selection_with(
+        vec![Line::Text { text: String::new(), monospace: false }]);
+    res.process(hwnd, &mut app);
+}
+
+fn copy(hwnd: HWND, mut sr: StateRef<App>) {
+    let mut app = sr.state_mut();
+    let (lines, plain_text) = app.copy();
+    drop(app);
+    let mut cm = ClipboardManager::open(hwnd);
+    cm.empty(sr.reent());
+    cm.set_private();
+    cm.set_text(&plain_text);
+    cm.close();
+    let mut app = sr.state_mut();
+    app.clipboard = Some(Clipboard {
+        sequence_number: get_clipboard_sequence_number(),
+        lines,
+    });
+    CmdResult::regular().process(hwnd, &mut app);
+}
+
+fn paste(hwnd: HWND, mut sr: StateRef<App>) {
+    let mut cm = ClipboardManager::open(hwnd);
+    let has_private = cm.has_private();
+    let plain_text = if has_private { None } else { cm.get_text() };
+    cm.close();
+
+    let mut app = sr.state_mut();
+    let cmd_res = if has_private {
+        let clipboard = app.clipboard.as_ref().unwrap(); 
+        assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
+        let lines = clipboard.lines.clone();
+        app.paste(lines)
+    } else if let Some(plain_text) = plain_text {
+        let lines: Vec<Line> = plain_text.split('\n')
+            .map(|s| Line::Text { text: s.to_owned(), monospace: false })
+            .collect();
+        app.paste(lines)
+    } else {
+        CmdResult::nothing()
+    };
+    cmd_res.process(hwnd, &mut app);
+}
+
 impl WindowProcState for App {
     fn window_proc(
         mut sr: StateRef<Self>,
@@ -856,65 +917,19 @@ impl WindowProcState for App {
                 }
 
                 if ctrl_pressed && scan_code == 0x2d {  // Ctrl-X
-                    let (lines, plain_text) = app.copy();
                     drop(app);
-
-                    let mut cm = ClipboardManager::open(hwnd);
-                    cm.empty(sr.reent());
-                    cm.set_private();
-                    cm.set_text(&plain_text);
-                    cm.close();
-                    let mut app = sr.state_mut();
-                    app.clipboard = Some(Clipboard {
-                        sequence_number: get_clipboard_sequence_number(),
-                        lines,
-                    });
-
-                    let res = app.replace_selection_with(
-                        vec![Line::Text { text: String::new(), monospace: false }]);
-                    res.process(hwnd, &mut app);
+                    cut(hwnd, sr);
                     return None;
                 }
 
                 if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
-                    let (lines, plain_text) = app.copy();
                     drop(app);
-                    let mut cm = ClipboardManager::open(hwnd);
-                    cm.empty(sr.reent());
-                    cm.set_private();
-                    cm.set_text(&plain_text);
-                    cm.close();
-                    let mut app = sr.state_mut();
-                    app.clipboard = Some(Clipboard {
-                        sequence_number: get_clipboard_sequence_number(),
-                        lines,
-                    });
-                    CmdResult::regular().process(hwnd, &mut app);
+                    copy(hwnd, sr);
                     return None;
                 }
                 if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
                     drop(app);
-
-                    let mut cm = ClipboardManager::open(hwnd);
-                    let has_private = cm.has_private();
-                    let plain_text = if has_private { None } else { cm.get_text() };
-                    cm.close();
-
-                    let mut app = sr.state_mut();
-                    let cmd_res = if has_private {
-                        let clipboard = app.clipboard.as_ref().unwrap(); 
-                        assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
-                        let lines = clipboard.lines.clone();
-                        app.paste(lines)
-                    } else if let Some(plain_text) = plain_text {
-                        let lines: Vec<Line> = plain_text.split('\n')
-                            .map(|s| Line::Text { text: s.to_owned(), monospace: false })
-                            .collect();
-                        app.paste(lines)
-                    } else {
-                        CmdResult::nothing()
-                    };
-                    cmd_res.process(hwnd, &mut app);
+                    paste(hwnd, sr);
                     return None;
                 }
             }
