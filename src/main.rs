@@ -900,6 +900,24 @@ impl WindowProcState for App {
                     } else {
                         None
                     }
+                    VK_INSERT => if ctrl_pressed {
+                        drop(app);
+                        copy(hwnd, sr);
+                        return None;
+                    } else if shift_pressed {
+                        drop(app);
+                        paste(hwnd, sr);
+                        return None;
+                    } else {
+                        None
+                    }
+                    VK_DELETE => if shift_pressed {
+                        drop(app);
+                        cut(hwnd, sr);
+                        return None;
+                    } else {
+                        None
+                    }
                     _ => None
                 };
                 if let Some(cmd_res) = cmd_res {
