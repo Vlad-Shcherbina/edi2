@@ -218,6 +218,7 @@ struct App {
     cblocks: CBlocks,
 
     conn: rusqlite::Connection,
+    data_version: i64,
     db_key_to_node_key: FnvHashMap<i64, NodeKey>,
 
     unsaved: Unsaved,
@@ -451,12 +452,18 @@ impl App {
         } = storage::load_or_create(&tx);
         tx.commit().unwrap();
 
+        let data_version: i64 = conn
+            .pragma_query_value(None, "data_version", |row| row.get(0))
+            .unwrap();
+        dbg!(data_version);
+
         let mut app = App {
             ctx,
             nodes,
             blocks,
             cblocks,
             conn,
+            data_version,
             db_key_to_node_key,
             unsaved: Unsaved::new(),
             last_command_time: std::time::Instant::now(),
@@ -477,6 +484,14 @@ impl App {
     fn save_changes(&mut self, hwnd: HWND) {
         assert!(self.unsaved.has_changes());
         println!("Saving...");
+
+        let data_version: i64 = self.conn
+            .pragma_query_value(None, "data_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(data_version, self.data_version,
+            "db was modified by another process");
+        // TODO: better error reporting
+
         let nodes = &self.nodes;
         let blocks = &self.blocks;
         let cblocks = &self.cblocks;
