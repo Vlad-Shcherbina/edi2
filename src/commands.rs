@@ -6,6 +6,7 @@ pub enum CmdClass {
     PutWhitespace,
     BackspaceChar,
     BackspaceNewLine,
+    DelChar,
     Other,
 }
 
@@ -1252,6 +1253,39 @@ impl App {
         let mut res = CmdResult::regular();
         res.class = CmdClass::BackspaceNewLine;
         res
+    }
+
+    pub fn del(&mut self) -> CmdResult {
+        if self.cur.sel.is_some() {
+            return self.replace_selection_with(vec![
+                Line::Text { text: String::new(), monospace: false }]);
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let text = nodes[node].lines[line_idx].line.text();
+
+        if let Some(next_pos) = next_char_pos(text, self.cur.pos) {
+            splice_line_text(node, line_idx,
+                self.cur.pos, next_pos, "",
+                nodes, &mut undo_group.edits, &mut self.unsaved);
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
+            if self.last_cmd_class == CmdClass::DelChar {
+                self.merge_undo_groups();
+            }
+            let mut res = CmdResult::regular();
+            res.class = CmdClass::DelChar;
+            return res;
+        }
+
+        // TODO        
+        CmdResult::nothing()
     }
 
     pub fn tab(&mut self) -> CmdResult {

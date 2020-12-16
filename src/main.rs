@@ -931,7 +931,7 @@ impl WindowProcState for App {
                         cut(hwnd, sr);
                         return None;
                     } else {
-                        None
+                        Some(app.del())
                     }
                     _ => None
                 };
