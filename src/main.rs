@@ -940,6 +940,11 @@ impl WindowProcState for App {
                     return None;
                 }
 
+                if ctrl_pressed && key_code == 'P' as i32{
+                    app.toggle_monospace().process(hwnd, &mut app);
+                    return None;
+                }
+
                 if ctrl_pressed && key_code == 'Z' as i32{
                     app.undo().process(hwnd, &mut app);
                     return None;

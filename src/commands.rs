@@ -1288,6 +1288,46 @@ impl App {
         CmdResult::nothing()
     }
 
+    pub fn toggle_monospace(&mut self) -> CmdResult {
+        if self.cur.sel.is_some() {
+            return CmdResult::nothing();  // TODO
+        }
+        if self.cur.line == 0 {
+            return CmdResult::nothing();
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let line = &nodes[node].lines[line_idx].line;
+
+        let new_line = match line {
+            Line::Text { text, monospace } =>
+                Line::Text {
+                    text: text.to_owned(),
+                    monospace: !*monospace,
+                },
+            Line::Node {..} => panic!(),
+        };
+
+        splice_node_lines(
+            node,
+            line_idx, line_idx + 1, vec![new_line],
+            blocks, &mut self.cblocks, nodes,
+            &mut undo_group.edits,
+            &mut self.unsaved);
+
+        self.sink_cursor();
+
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
+        CmdResult::regular()
+    }
+
     pub fn tab(&mut self) -> CmdResult {
         if self.cur.sel.is_some() {
             return CmdResult::nothing();  // TODO?
