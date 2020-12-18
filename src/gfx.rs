@@ -255,7 +255,15 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                         let brushes = &self.ctx.header_rainbow_brushes;
                         brushes[(b.depth - 1) as usize % brushes.len()].as_raw()
                     } else {
-                        self.ctx.text_brush.as_raw()
+                        let monospace = match node.lines[line_idx].line {
+                            Line::Text { monospace, .. } => monospace,
+                            Line::Node {..} => panic!(),
+                        };
+                        if monospace {
+                            self.ctx.monospace_text_brush.as_raw()
+                        } else {
+                            self.ctx.text_brush.as_raw()
+                        }
                     };
 
                     unsafe {
