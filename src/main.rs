@@ -940,27 +940,27 @@ impl WindowProcState for App {
                     return None;
                 }
 
-                if ctrl_pressed && scan_code == 0x2c {  // Ctrl-Z
+                if ctrl_pressed && key_code == 'Z' as i32{
                     app.undo().process(hwnd, &mut app);
                     return None;
                 }
-                if ctrl_pressed && scan_code == 0x18 {  // Ctrl-Y
+                if ctrl_pressed && key_code == 'Y' as i32 {
                     app.redo().process(hwnd, &mut app);
                     return None;
                 }
 
-                if ctrl_pressed && scan_code == 0x2d {  // Ctrl-X
+                if ctrl_pressed && key_code == 'X' as i32 {
                     drop(app);
                     cut(hwnd, sr);
                     return None;
                 }
 
-                if ctrl_pressed && scan_code == 0x2e {  // Ctrl-C
+                if ctrl_pressed && key_code == 'C' as i32 {
                     drop(app);
                     copy(hwnd, sr);
                     return None;
                 }
-                if ctrl_pressed && scan_code == 0x2f {  // Ctrl-V
+                if ctrl_pressed && key_code == 'V' as i32 {
                     drop(app);
                     paste(hwnd, sr);
                     return None;
