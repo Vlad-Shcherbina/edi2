@@ -95,9 +95,7 @@ impl<K: Key, T> SlotMap<K, T> {
             slot = &mut self.slots[self.free as usize];
             assert!(!slot.occupied());
             self.free = unsafe { slot.u.next_free };
-            unsafe {
-                slot.u.value = ManuallyDrop::new(value);
-            }
+            slot.u.value = ManuallyDrop::new(value);
         } else {
             slot_idx = self.slots.len().try_into().unwrap();
             self.slots.push(Slot {
