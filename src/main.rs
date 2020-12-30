@@ -851,7 +851,12 @@ impl WindowProcState for App {
                             app.collapse_block(block)
                         } else {
                             expand_block(block, blocks, cblocks, nodes, &mut app.unsaved);
-                            CmdResult::regular()
+                            CmdResult {
+                                repaint: true,
+                                update_anchor_x: true,
+                                scroll_to_reveal_cursor: false,
+                                class: CmdClass::Other,
+                            }
                         };
                         cmd_res.process(hwnd, app);
                     }

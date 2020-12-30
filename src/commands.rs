@@ -125,7 +125,12 @@ impl App {
 
         blocks[block].collapsed = Some(cforest);
 
-        CmdResult::regular()
+        CmdResult {
+            repaint: true,
+            update_anchor_x: true,
+            scroll_to_reveal_cursor: false,
+            class: CmdClass::Other,
+        }
     }
 
     pub fn left(&mut self) -> CmdResult {
