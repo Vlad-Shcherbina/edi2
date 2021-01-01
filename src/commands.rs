@@ -487,6 +487,32 @@ impl App {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
         let eps = 3.0;
+
+        let b = &blocks[self.cur.block];
+        match b.children[self.cur.line] {
+            BlockChild::Block(_) => {}
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let node = &nodes[node];
+                let layout = node.line_layout(line_idx, &self.ctx);
+                let cc = layout.cursor_coord(self.cur.pos_skew);
+                if cc.top - eps > 0.0 {
+                    let x = self.cur.anchor_x
+                        - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                    self.cur.pos_skew = layout.coords_to_pos(x, cc.top - eps);
+                    if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
+                        self.cur.sel = None;
+                    }
+                    return CmdResult {
+                        repaint: true,
+                        update_anchor_x: false,
+                        scroll_to_reveal_cursor: true,
+                        class: CmdClass::Other,
+                    };
+                }
+            }
+        }
+
         if self.cur.line <= sel.line {
             if self.cur.block == self.root_block && self.cur.line == 1 {
                 self.cur.pos_skew = (0, Skew::default());
@@ -593,6 +619,32 @@ impl App {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
         let eps = 3.0;
+
+        let b = &blocks[self.cur.block];
+        match b.children[self.cur.line] {
+            BlockChild::Block(_) => {}
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let node = &nodes[node];
+                let layout = node.line_layout(line_idx, &self.ctx);
+                let cc = layout.cursor_coord(self.cur.pos_skew);
+                if cc.top + cc.height + eps < layout.height {
+                    let x = self.cur.anchor_x
+                        - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
+                    self.cur.pos_skew = layout.coords_to_pos(x, cc.top + cc.height + eps);
+                    if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
+                        self.cur.sel = None;
+                    }
+                    return CmdResult {
+                        repaint: true,
+                        update_anchor_x: false,
+                        scroll_to_reveal_cursor: true,
+                        class: CmdClass::Other,
+                    };
+                }
+            }
+        }
+
         if self.cur.line >= sel.line {
             let b = &blocks[self.cur.block];
             if self.cur.line + 1 < b.children.len() {
