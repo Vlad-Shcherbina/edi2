@@ -522,13 +522,19 @@ impl App {
             assert!(i > 0);
             let pb = &blocks[parent];
             self.cur.block = parent;
-            self.cur.line = i - 1;
-            let x = self.cur.anchor_x
-                - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
-            let y = pb.child_size(i - 1, &self.ctx, blocks, nodes).1 - eps;
-            self.cur.pos_skew = pb.child_coords_to_pos(
-                i - 1, (x, y),
-                &self.ctx, blocks, nodes);
+
+            if parent == self.root_block && i == 1 {
+                self.cur.line = 1;
+                self.cur.pos_skew = (0, Skew::default());
+            } else {
+                self.cur.line = i - 1;
+                let x = self.cur.anchor_x
+                    - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
+                let y = pb.child_size(i - 1, &self.ctx, blocks, nodes).1 - eps;
+                self.cur.pos_skew = pb.child_coords_to_pos(
+                    i - 1, (x, y),
+                    &self.ctx, blocks, nodes);                
+            }
 
             sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
