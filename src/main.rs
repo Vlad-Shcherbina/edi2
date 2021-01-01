@@ -37,6 +37,7 @@ use crate::util::*;
 use crate::types::*;
 use crate::edit::*;
 use crate::commands::{CmdClass, CmdResult};
+use crate::text_layout::Skew;
 
 struct AppCtx {
     arrow_cursor: HCURSOR,
@@ -123,9 +124,15 @@ impl AppCtx {
 pub struct Cur {
     pub block: BlockKey,
     pub line: usize,
-    pub pos: usize,
+    pub pos_skew: (usize, Skew),
     pub anchor_x: f32,
     pub sel: Option<Sel>,
+}
+
+impl Cur {
+    fn pos(&self) -> usize {
+        self.pos_skew.0
+    }
 }
 
 pub struct Sel {
@@ -169,7 +176,7 @@ impl UndoGroupBuilder {
     fn finish(mut self, cur_after: Waypoint) -> UndoGroup {
         let cur_before = std::mem::replace(
             &mut self.cur_before,
-            Waypoint { path: vec![], pos: 0 });
+            Waypoint { path: vec![], pos_skew: Default::default() });
         UndoGroup {
             cur_before,
             edits: std::mem::replace(&mut self.edits, vec![]),
@@ -257,7 +264,8 @@ impl CmdResult {
             let height = (rc.bottom - rc.top) as f32;
 
             let cc = app.blocks[app.cur.block].abs_cursor_coord(
-                app.cur.line, app.cur.pos, &app.ctx, &app.blocks, &app.nodes);
+                app.cur.line, app.cur.pos_skew,
+                &app.ctx, &app.blocks, &app.nodes);
             if app.y_offset + cc.top < 0.0 {
                 app.y_offset = -cc.top;
             } else if app.y_offset + cc.top + cc.height > height {
@@ -279,7 +287,7 @@ impl CmdResult {
 #[derive(Debug, PartialEq)]
 struct Waypoint {
     path: Vec<usize>,  // line indices
-    pos: usize,
+    pos_skew: (usize, Skew),
 }
 
 fn expand_block(
@@ -535,7 +543,7 @@ impl App {
         path.reverse();
         Waypoint {
             path,
-            pos: self.cur.pos,
+            pos_skew: self.cur.pos_skew,
         }
     }
 
@@ -559,11 +567,11 @@ impl App {
         }
         self.cur.block = b;
         self.cur.line = *wp.path.last().unwrap();
-        self.cur.pos = wp.pos;
+        self.cur.pos_skew = wp.pos_skew;
         self.cur.sel = None;
 
         // It is possible that we recorded cursor position
-        // with selection, and we din't restore selection.
+        // with selection, and we didn't restore selection.
         self.sink_cursor();
     }
 
@@ -609,7 +617,7 @@ impl App {
         assert_eq!(self.blocks.len(), cnt.block);
         assert_eq!(self.cblocks.len(), cnt.cblock);
         if let Some(sel) = self.cur.sel.as_ref() {
-            assert_ne!((self.cur.line, self.cur.pos), (sel.line, sel.pos));
+            assert_ne!((self.cur.line, self.cur.pos()), (sel.line, sel.pos));
         }
 
         // TODO: check for all reachable nodes:
@@ -622,7 +630,8 @@ impl App {
         let nodes = &self.nodes;
 
         self.cur.anchor_x = blocks[self.cur.block].abs_cur_x(
-            self.cur.line, self.cur.pos, &self.ctx, blocks, nodes);
+            self.cur.line, self.cur.pos_skew,
+            &self.ctx, blocks, nodes);
     }
 
     // If the cursor is on a VisTree::Node boundary and not on a line of text
@@ -636,15 +645,17 @@ impl App {
         match b.children[self.cur.line] {
             BlockChild::Leaf => {},
             BlockChild::Block(child_block) => {
-                match self.cur.pos {
+                match self.cur.pos() {
                     0 => {
                         self.cur.block = child_block;
                         self.cur.line = 0;
-                        self.cur.pos = 0;
+                        self.cur.pos_skew = (0, Skew::default());
                     }
                     1 => {
                         let (block, line) = last_leaf(child_block, blocks);
-                        self.cur.pos = blocks[block].max_pos(line, blocks, &self.nodes);
+                        self.cur.pos_skew = (
+                            blocks[block].max_pos(line, blocks, &self.nodes),
+                            Skew::default());
                         self.cur.line = line;
                         self.cur.block = block;
                     }
@@ -833,11 +844,11 @@ impl WindowProcState for App {
                     &app.blocks, &app.nodes);
                 match v.result {
                     gfx::MouseResult::Nothing => {}
-                    gfx::MouseResult::Cur { block, line, pos } => {
+                    gfx::MouseResult::Cur { block, line, pos_skew } => {
                         app.cur = Cur {
                             block,
                             line,
-                            pos,
+                            pos_skew,
                             anchor_x: 0.0,
                             sel: None,
                         };

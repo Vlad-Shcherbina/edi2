@@ -80,7 +80,7 @@ impl App {
                 if blocks[block].depth < blocks[self.cur.block].depth {
                     self.cur.block = block;
                     self.cur.line = 0;
-                    self.cur.pos = first_line_len;
+                    self.cur.pos_skew = (first_line_len, Skew::default());
                     self.cur.sel = None;
                 } else {
                     assert_eq!(self.cur.block, block);
@@ -92,10 +92,10 @@ impl App {
                     }
                     if self.cur.line > 0 {
                         self.cur.line = 0;
-                        self.cur.pos = first_line_len;
+                        self.cur.pos_skew = (first_line_len, Skew::default());
                     }
                     if let Some(sel) = self.cur.sel.as_ref() {
-                        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                        if self.cur.line == sel.line && self.cur.pos() == sel.pos {
                             self.cur.sel = None;
                         }
                     }
@@ -146,8 +146,8 @@ impl App {
                 let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
                 let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
-                if let Some(pos) = prev_char_pos(text, self.cur.pos) {
-                    self.cur.pos = pos;
+                if let Some(pos) = prev_char_pos(text, self.cur.pos()) {
+                    self.cur.pos_skew = (pos, Skew::Righty);
                     return CmdResult::regular();
                 }
                 let leaf = (self.cur.block, self.cur.line);
@@ -157,7 +157,7 @@ impl App {
                     let node = &nodes[node];
                     let text = &node.lines[line_idx].line.text();
                     
-                    self.cur.pos = text.len();
+                    self.cur.pos_skew = (text.len(), Skew::default());
                     self.cur.line = prev_line;
                     self.cur.block = prev_block;
                 }
@@ -180,14 +180,14 @@ impl App {
                 let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
                 let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
-                if let Some(pos) = next_char_pos(text, self.cur.pos) {
-                    self.cur.pos = pos;
+                if let Some(pos) = next_char_pos(text, self.cur.pos()) {
+                    self.cur.pos_skew = (pos, Skew::Righty);
                     return CmdResult::regular();
                 }
                 let leaf = (self.cur.block, self.cur.line);
                 if let Some((next_block, next_line)) = next_leaf(leaf, blocks) {
                     self.cur.line = next_line;
-                    self.cur.pos = 0;
+                    self.cur.pos_skew = (0, Skew::default());
                     self.cur.block = next_block;
                 }
             }
@@ -198,7 +198,7 @@ impl App {
 
     pub fn shift_left(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
@@ -206,19 +206,19 @@ impl App {
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
-        if (self.cur.line, self.cur.pos) <= (sel.line, sel.pos) {
+        if (self.cur.line, pos) <= (sel.line, sel.pos) {
             match blocks[self.cur.block].children[self.cur.line] {
                 BlockChild::Block(_) =>
-                    if self.cur.pos == 1 {
-                        self.cur.pos = 0;
+                    if pos == 1 {
+                        self.cur.pos_skew = (0, Skew::default());
                         return CmdResult::regular();
                     }
                 BlockChild::Leaf => {
                     let (node, line_idx) = blocks[self.cur.block]
                         .node_line_idx(self.cur.line, blocks).unwrap();
                     let text = &nodes[node].lines[line_idx].line.text();
-                    if let Some(pos) = prev_char_pos(text, self.cur.pos) {
-                        self.cur.pos = pos;
+                    if let Some(pos) = prev_char_pos(text, pos) {
+                        self.cur.pos_skew = (pos, Skew::Righty);
                         return CmdResult::regular();
                     }
                 }
@@ -228,14 +228,16 @@ impl App {
             }
             if self.cur.line > 0 {
                 self.cur.line -= 1;
-                self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+                self.cur.pos_skew = (
+                    blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes),
+                    Skew::default());
                 return CmdResult::regular();
             }
 
             let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
             self.cur.block = parent;
             self.cur.line = i;
-            self.cur.pos = 0;
+            self.cur.pos_skew = (0, Skew::default());
 
             sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
@@ -244,42 +246,46 @@ impl App {
             loop {
                 match blocks[self.cur.block].children[self.cur.line] {
                     BlockChild::Block(_) =>
-                        if self.cur.pos == 1 {
-                            self.cur.pos = 0;
+                        if pos == 1 {
+                            self.cur.pos_skew = (0, Skew::default());
                             break;
                         }
                     BlockChild::Leaf => {
                         let (node, line_idx) = blocks[self.cur.block]
                             .node_line_idx(self.cur.line, blocks).unwrap();
                         let text = &nodes[node].lines[line_idx].line.text();
-                        if let Some(pos) = prev_char_pos(text, self.cur.pos) {
-                            self.cur.pos = pos;
+                        if let Some(pos) = prev_char_pos(text, pos) {
+                            self.cur.pos_skew = (pos, Skew::Righty);
                             break;
                         }                               
                     }
                 }
                 if self.cur.line > 0 {
                     self.cur.line -= 1;
-                    self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+                    self.cur.pos_skew = (
+                        blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes),
+                        Skew::default());
                     break;
                 }
                 panic!("shouldn't happen when shrinking");
             }
 
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 if let Some((line, pos)) = sel.anchor_path.pop() {
                     self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = blocks[self.cur.block].children.len() - 1;
-                    self.cur.pos = blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes);
+                    self.cur.pos_skew = (
+                        blocks[self.cur.block].max_pos(self.cur.line, blocks, nodes),
+                        Skew::default());
                     sel.line = line;
                     sel.pos = pos;
                 }
             }
 
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 self.cur.sel = None;
                 // Necessary because maybe we were at the block boundary,
                 // but didn't go inside because sel.anchor_path was cleared
@@ -293,7 +299,7 @@ impl App {
 
     pub fn shift_right(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
@@ -301,26 +307,26 @@ impl App {
         });
         let blocks = &self.blocks;
         let nodes = &self.nodes;
-        if (self.cur.line, self.cur.pos) >= (sel.line, sel.pos) {
+        if (self.cur.line, pos) >= (sel.line, sel.pos) {
             match blocks[self.cur.block].children[self.cur.line] {
                 BlockChild::Block(_) =>
-                    if self.cur.pos == 0 {
-                        self.cur.pos = 1;
+                    if pos == 0 {
+                        self.cur.pos_skew = (1, Skew::default());
                         return CmdResult::regular();
                     }
                 BlockChild::Leaf => {
                     let (node, line_idx) = blocks[self.cur.block]
                         .node_line_idx(self.cur.line, blocks).unwrap();
                     let text = &nodes[node].lines[line_idx].line.text();
-                    if let Some(pos) = next_char_pos(text, self.cur.pos) {
-                        self.cur.pos = pos;
+                    if let Some(pos) = next_char_pos(text, pos) {
+                        self.cur.pos_skew = (pos, Skew::Righty);
                         return CmdResult::regular();
                     }                        
                 }
             }
             if self.cur.line + 1 < blocks[self.cur.block].children.len() {
                 self.cur.line += 1;
-                self.cur.pos = 0;
+                self.cur.pos_skew = (0, Skew::default());
                 return CmdResult::regular();
             }
             if self.cur.block == self.root_block {
@@ -330,7 +336,7 @@ impl App {
             let (parent, i) = blocks[self.cur.block].parent_idx.unwrap();
             self.cur.block = parent;
             self.cur.line = i;
-            self.cur.pos = 1;
+            self.cur.pos_skew = (1, Skew::default());
             sel.anchor_path.push((sel.line, sel.pos));
             sel.line = i;
             sel.pos = 0;
@@ -338,42 +344,42 @@ impl App {
             loop {
                 match blocks[self.cur.block].children[self.cur.line] {
                     BlockChild::Block(_) =>
-                        if self.cur.pos == 0 {
-                            self.cur.pos = 1;
+                        if pos == 0 {
+                            self.cur.pos_skew = (1, Skew::default());
                             break;
                         }
                     BlockChild::Leaf => {
                         let (node, line_idx) = blocks[self.cur.block]
                             .node_line_idx(self.cur.line, blocks).unwrap();
                         let text = &nodes[node].lines[line_idx].line.text();
-                        if let Some(pos) = next_char_pos(text, self.cur.pos) {
-                            self.cur.pos = pos;
+                        if let Some(pos) = next_char_pos(text, pos) {
+                            self.cur.pos_skew = (pos, Skew::Lefty);
                             break;
                         }                               
                     }
                 }
                 if self.cur.line + 1 < blocks[self.cur.block].children.len() {
                     self.cur.line += 1;
-                    self.cur.pos = 0;
+                    self.cur.pos_skew = (0, Skew::default());
                     break;
                 }
                 panic!("shouldn't happen when shrinking");
             }
 
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 if let Some((line, pos)) = sel.anchor_path.pop() {
                     self.cur.block = match blocks[self.cur.block].children[self.cur.line] {
                         BlockChild::Leaf => panic!(),
                         BlockChild::Block(b) => b,
                     };
                     self.cur.line = 0;
-                    self.cur.pos = 0;
+                    self.cur.pos_skew = (0, Skew::default());
                     sel.line = line;
                     sel.pos = pos;
                 }
             }
 
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 self.cur.sel = None;
                 // Necessary because maybe we were at the block boundary,
                 // but didn't go inside because sel.anchor_path was cleared
@@ -397,11 +403,11 @@ impl App {
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
-        let cc = layout.cursor_coord(self.cur.pos);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
         if cc.top - eps > 0.0 {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
-            self.cur.pos = layout.coords_to_pos(x, cc.top - eps);
+            self.cur.pos_skew = layout.coords_to_pos(x, cc.top - eps);
         } else {
             let prev_leaf = prev_leaf((self.cur.block, self.cur.line), blocks);
             if let Some((prev_block, prev_idx)) = prev_leaf {
@@ -412,7 +418,9 @@ impl App {
                 let y = b.child_size(prev_idx, &self.ctx, blocks, nodes).1 - eps;
 
                 self.cur.line = prev_idx;
-                self.cur.pos = b.child_coords_to_pos(prev_idx, (x, y), &self.ctx, blocks, nodes);
+                self.cur.pos_skew = b.child_coords_to_pos(
+                    prev_idx, (x, y),
+                    &self.ctx, blocks, nodes);
                 self.cur.block = prev_block;
             }
         }
@@ -437,11 +445,11 @@ impl App {
         let layout = node.line_layout(line_idx, &self.ctx);
 
         let eps = 3.0;
-        let cc = layout.cursor_coord(self.cur.pos);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
         if cc.top + cc.height + eps < layout.height {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
-            self.cur.pos = layout.coords_to_pos(x, cc.top + cc.height + eps);
+            self.cur.pos_skew = layout.coords_to_pos(x, cc.top + cc.height + eps);
         } else {
             let next_leaf = next_leaf((self.cur.block, self.cur.line), blocks);
             if let Some((next_block, next_idx)) = next_leaf {
@@ -452,7 +460,7 @@ impl App {
                 let y = eps;
 
                 self.cur.line = next_idx;
-                self.cur.pos = b.child_coords_to_pos(
+                self.cur.pos_skew = b.child_coords_to_pos(
                     next_idx, (x, y),
                     &self.ctx, blocks, nodes);
                 self.cur.block = next_block;
@@ -469,7 +477,7 @@ impl App {
 
     pub fn shift_up(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
@@ -480,8 +488,8 @@ impl App {
         let eps = 3.0;
         if self.cur.line <= sel.line {
             if self.cur.block == self.root_block && self.cur.line == 1 {
-                self.cur.pos = 0;
-                if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                self.cur.pos_skew = (0, Skew::default());
+                if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                    self.cur.sel = None;
                 }
                 return CmdResult {
@@ -497,7 +505,7 @@ impl App {
                     - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
                 let y = b.child_size(self.cur.line - 1, &self.ctx, blocks, nodes).1 - eps;
                 self.cur.line -= 1;
-                self.cur.pos = b.child_coords_to_pos(
+                self.cur.pos_skew = b.child_coords_to_pos(
                     self.cur.line, (x, y),
                     &self.ctx, blocks, nodes);
                 assert_ne!(self.cur.line, sel.line);
@@ -517,7 +525,7 @@ impl App {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
             let y = pb.child_size(i - 1, &self.ctx, blocks, nodes).1 - eps;
-            self.cur.pos = pb.child_coords_to_pos(
+            self.cur.pos_skew = pb.child_coords_to_pos(
                 i - 1, (x, y),
                 &self.ctx, blocks, nodes);
 
@@ -548,10 +556,10 @@ impl App {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
             let y = b.child_size(self.cur.line, &self.ctx, blocks, nodes).1 - eps;
-            self.cur.pos = b.child_coords_to_pos(
+            self.cur.pos_skew = b.child_coords_to_pos(
                 self.cur.line, (x, y),
                 &self.ctx, blocks, nodes);
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 self.cur.sel = None;
                 // Necessary because maybe we were at the block boundary,
                 // but didn't go inside because sel.anchor_path was cleared
@@ -569,7 +577,7 @@ impl App {
 
     pub fn shift_down(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
@@ -586,7 +594,7 @@ impl App {
                     - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
                 let y = eps;
                 self.cur.line += 1;
-                self.cur.pos = b.child_coords_to_pos(
+                self.cur.pos_skew = b.child_coords_to_pos(
                     self.cur.line, (x, y),
                     &self.ctx, blocks, nodes);
                 assert_ne!(self.cur.line, sel.line);
@@ -602,8 +610,10 @@ impl App {
                 if self.cur.block == self.root_block {
                     let b = &blocks[self.cur.block];
                     self.cur.line = b.children.len() - 1;
-                    self.cur.pos = b.max_pos(self.cur.line, blocks, nodes);
-                    if self.cur.line == sel.line && self.cur.pos == sel.pos {
+                    self.cur.pos_skew = (
+                        b.max_pos(self.cur.line, blocks, nodes),
+                        Skew::default());
+                    if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                        self.cur.sel = None;
                     }
                     return CmdResult {
@@ -629,7 +639,7 @@ impl App {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * pb.depth as f32);
             let y = eps;
-            self.cur.pos = pb.child_coords_to_pos(
+            self.cur.pos_skew = pb.child_coords_to_pos(
                 self.cur.line, (x, y),
                 &self.ctx, blocks, nodes);
         } else {
@@ -656,10 +666,10 @@ impl App {
             let x = self.cur.anchor_x
                 - (gfx::X_OFFSET + gfx::INDENT * b.depth as f32);
             let y = eps;
-            self.cur.pos = b.child_coords_to_pos(
+            self.cur.pos_skew = b.child_coords_to_pos(
                 self.cur.line, (x, y),
                 &self.ctx, blocks, nodes);
-            if self.cur.line == sel.line && self.cur.pos == sel.pos {
+            if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
                 self.cur.sel = None;
                 // Necessary because maybe we were at the block boundary,
                 // but didn't go inside because sel.anchor_path was cleared
@@ -865,29 +875,31 @@ impl App {
 
     pub fn home(&mut self) -> CmdResult {
         self.sink_cursor();
-        self.cur.pos = 0;
+        self.cur.pos_skew = (0, Skew::default());
         CmdResult::regular()
     }
 
     pub fn end(&mut self) -> CmdResult {
         self.sink_cursor();
         let b = &self.blocks[self.cur.block];
-        self.cur.pos = b.max_pos(self.cur.line, &self.blocks, &self.nodes);
+        self.cur.pos_skew = (
+            b.max_pos(self.cur.line, &self.blocks, &self.nodes),
+            Skew::default());
         CmdResult::regular()
     }
 
     pub fn shift_home(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
             anchor_path: vec![],
         });
 
-        self.cur.pos = 0;
+        self.cur.pos_skew = (0, Skew::default());
 
-        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+        if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
             self.cur.sel = None;
             self.sink_cursor();
         }
@@ -896,7 +908,7 @@ impl App {
 
     pub fn shift_end(&mut self) -> CmdResult {
         let line = self.cur.line;
-        let pos = self.cur.pos;
+        let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
             line,
             pos,
@@ -904,9 +916,11 @@ impl App {
         });
 
         let b = &self.blocks[self.cur.block];
-        self.cur.pos = b.max_pos(self.cur.line, &self.blocks, &self.nodes);
+        self.cur.pos_skew = (
+            b.max_pos(self.cur.line, &self.blocks, &self.nodes),
+            Skew::default());
 
-        if self.cur.line == sel.line && self.cur.pos == sel.pos {
+        if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
             self.cur.sel = None;
             self.sink_cursor();
         }
@@ -929,7 +943,7 @@ impl App {
         let (node, line_idx) = blocks[self.cur.block].node_line_idx(self.cur.line, blocks).unwrap();
         let text = nodes[node].lines[line_idx].line.text();
 
-        if c == ' ' && self.cur.line > 0 && self.cur.pos == 1 && text.starts_with('*') {
+        if c == ' ' && self.cur.line > 0 && self.cur.pos() == 1 && text.starts_with('*') {
             let local_header = text[1..].to_owned();
             let blocks = &mut self.blocks;
             let new_node = create_empty_node(
@@ -947,7 +961,7 @@ impl App {
             assert_eq!(blocks[new_block].node, new_node);
             self.cur.block = new_block;
             self.cur.line = 0;
-            self.cur.pos = 0;
+            self.cur.pos_skew = (0, Skew::default());
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
             return CmdResult::regular();
@@ -955,11 +969,11 @@ impl App {
 
         splice_line_text(
             node,
-            line_idx, self.cur.pos, self.cur.pos,
+            line_idx, self.cur.pos(), self.cur.pos(),
             &c.to_string(),
             nodes, &mut undo_group.edits,
             &mut self.unsaved);
-        self.cur.pos += c.len_utf8();
+        self.cur.pos_skew = (self.cur.pos() + c.len_utf8(), Skew::Righty);
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
         let mut res = CmdResult::regular();
@@ -1002,7 +1016,7 @@ impl App {
 
         let tail = splice_line_text(
             node, line_idx,
-            self.cur.pos, end_pos,
+            self.cur.pos(), end_pos,
             "",
             nodes, &mut undo_group.edits,
             &mut self.unsaved);
@@ -1025,7 +1039,7 @@ impl App {
                 &mut self.unsaved);
         }
         self.cur.line += 1;
-        self.cur.pos = 0;
+        self.cur.pos_skew = (0, Skew::default());
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
@@ -1062,7 +1076,7 @@ impl App {
         let (parent_block, idx_in_parent) = b.parent_idx.unwrap();
         assert!(idx_in_parent > 0);
 
-        if self.cur.pos == b.max_pos(0, blocks, nodes) &&
+        if self.cur.pos() == b.max_pos(0, blocks, nodes) &&
            (!b.is_expanded() || nodes[b.node].lines.is_empty()) {
             // There is nothing after the cursor in this block.
             // Create new bullet after.
@@ -1078,12 +1092,12 @@ impl App {
                 BlockChild::Block(b) => b,
             };
             self.cur.line = 0;
-            self.cur.pos = 0;
+            self.cur.pos_skew = (0, Skew::default());
         } else {
             // Create new bullet before.
             let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
             let prefix = splice_line_text(node, line_idx,
-                0, self.cur.pos, "",
+                0, self.cur.pos(), "",
                 nodes,
                 &mut undo_group.edits,
                 &mut self.unsaved);
@@ -1094,7 +1108,7 @@ impl App {
                 blocks, &mut self.cblocks, nodes,
                 &mut undo_group.edits,
                 &mut self.unsaved);
-            self.cur.pos = 0;
+            self.cur.pos_skew = (0, Skew::default());
         }
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
@@ -1118,11 +1132,11 @@ impl App {
         let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
         let text = nodes[node].lines[line_idx].line.text();
 
-        if let Some(prev_pos) = prev_char_pos(text, self.cur.pos) {
+        if let Some(prev_pos) = prev_char_pos(text, self.cur.pos()) {
             splice_line_text(node, line_idx,
-                prev_pos, self.cur.pos, "",
+                prev_pos, self.cur.pos(), "",
                 nodes, &mut undo_group.edits, &mut self.unsaved);
-            self.cur.pos = prev_pos;
+            self.cur.pos_skew = (prev_pos, Skew::Righty);
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
             if self.last_cmd_class == CmdClass::BackspaceChar ||
@@ -1181,7 +1195,7 @@ impl App {
                 &mut self.unsaved);
             self.cur.block = parent_block;
             self.cur.line = idx_in_parent;
-            self.cur.pos = 0;
+            self.cur.pos_skew = (0, Skew::default());
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
             return CmdResult::regular();            
@@ -1214,7 +1228,9 @@ impl App {
 
             self.cur.block = prev_block;
             self.cur.line = prev_idx;
-            self.cur.pos = blocks[prev_block].max_pos(prev_idx, blocks, nodes);
+            self.cur.pos_skew = (
+                blocks[prev_block].max_pos(prev_idx, blocks, nodes),
+                Skew::default());
 
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
@@ -1231,7 +1247,9 @@ impl App {
             if blocks[prev_block].node == blocks[self.cur.block].node {
                 self.cur.block = prev_block;
                 self.cur.line = prev_idx;
-                self.cur.pos = blocks[prev_block].max_pos(prev_idx, blocks, nodes);
+                self.cur.pos_skew = (
+                    blocks[prev_block].max_pos(prev_idx, blocks, nodes),
+                    Skew::default());
                 return CmdResult::regular();
             }
         }
@@ -1246,7 +1264,7 @@ impl App {
 
         self.cur.block = prev_block;
         self.cur.line = prev_idx;
-        self.cur.pos = prev_text_len;
+        self.cur.pos_skew = (prev_text_len, Skew::default());
         splice_node_lines(
             node, line_idx, line_idx + 1, vec![],
             blocks, cblocks, nodes,
@@ -1275,9 +1293,9 @@ impl App {
         let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
         let text = nodes[node].lines[line_idx].line.text();
 
-        if let Some(next_pos) = next_char_pos(text, self.cur.pos) {
+        if let Some(next_pos) = next_char_pos(text, self.cur.pos()) {
             splice_line_text(node, line_idx,
-                self.cur.pos, next_pos, "",
+                self.cur.pos(), next_pos, "",
                 nodes, &mut undo_group.edits, &mut self.unsaved);
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
@@ -1356,8 +1374,8 @@ impl App {
             Some(sel) => sel,
             None => return (vec![], String::new()),  // TODO: copy whole line/node?
         };
-        let (line1, pos1) = (self.cur.line, self.cur.pos).min((sel.line, sel.pos));
-        let (line2, pos2) = (self.cur.line, self.cur.pos).max((sel.line, sel.pos));
+        let (line1, pos1) = (self.cur.line, self.cur.pos()).min((sel.line, sel.pos));
+        let (line2, pos2) = (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
 
         let blocks = &self.blocks;
         let nodes = &self.nodes;
@@ -1405,7 +1423,7 @@ impl App {
     }
 
     pub fn replace_selection_with(&mut self, lines: Vec<Line>) -> CmdResult {
-        let cur_line_pos = (self.cur.line, self.cur.pos);
+        let cur_line_pos = (self.cur.line, self.cur.pos());
         let sel_line_pos = match self.cur.sel.as_ref() {
             Some(sel) => (sel.line, sel.pos),
             None => cur_line_pos,
@@ -1461,7 +1479,7 @@ impl App {
         }
         let cur_line_pos = cur_line_pos.unwrap();
         self.cur.line = cur_line_pos.0;
-        self.cur.pos = cur_line_pos.1;
+        self.cur.pos_skew = (cur_line_pos.1, Skew::default());
         self.cur.sel = None;
 
         let blocks = &mut self.blocks;

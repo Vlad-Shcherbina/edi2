@@ -181,7 +181,7 @@ impl DiskCur {
         DiskCur {
             path,
             line: cur.line,
-            pos: cur.pos,
+            pos: cur.pos_skew.0,
             y_offset,
         }
     }
@@ -197,7 +197,7 @@ impl DiskCur {
         Cur {
             block: b,
             line: self.line,
-            pos: self.pos,
+            pos_skew: (self.pos, Skew::default()),
             anchor_x: 0.0,
             sel: None,
         }

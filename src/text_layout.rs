@@ -18,6 +18,21 @@ pub struct CursorCoord {
     pub height: f32,
 }
 
+// text="ab", pos=1, skew=Lefty  means  the cursor is to the right of 'a'
+// text="ab", pos=1, skew=Righty  means  the cursor is to the left of 'b'
+// This matters if 'a' and 'b' are on different lines because of line wrapping.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Skew {
+    Lefty,
+    Righty,
+}
+
+// Use explicit 'Skew::Righty' when we really care (e.g. in `fn left()`),
+// and 'Skew::default()' where it doesn't matter.
+impl Default for Skew {
+    fn default() -> Self { Skew::Righty }
+}
+
 impl TextLayout {
     pub fn new(
         dwrite_factory: &ComPtr<IDWriteFactory>,
@@ -55,7 +70,11 @@ impl TextLayout {
         res
     }
 
-    pub fn cursor_coord(&self, pos: usize) -> CursorCoord {
+    pub fn cursor_coord(&self, (pos, skew): (usize, Skew)) -> CursorCoord {
+        let (pos, is_trailing_hit) = match skew {
+            Skew::Righty => (pos, 0),
+            Skew::Lefty => (prev_char_pos(&self.text, pos).unwrap(), 1),
+        };
         let wide_pos = wide_len(&self.text[..pos]);
 
         let mut x = 0.0;
@@ -64,7 +83,7 @@ impl TextLayout {
         let hr = unsafe {
             self.raw.HitTestTextPosition(
                 wide_pos.try_into().unwrap(),
-                0,  // isTrailingHit
+                is_trailing_hit,
                 &mut x, &mut y,
                 &mut metrics,
             )
@@ -77,7 +96,7 @@ impl TextLayout {
         }
     }
 
-    pub fn coords_to_pos(&self, x: f32, y: f32) -> usize {
+    pub fn coords_to_pos(&self, x: f32, y: f32) -> (usize, Skew) {
         let mut is_trailing_hit = 0;
         let mut is_inside = 0;
         let mut metrics = unsafe { std::mem::zeroed() };
@@ -93,8 +112,8 @@ impl TextLayout {
 
         let pos = wide_pos_to_pos(metrics.textPosition.try_into().unwrap(), &self.text);
         match is_trailing_hit {
-            0 => pos,
-            1 => next_char_pos(&self.text, pos).unwrap(),
+            0 => (pos, Skew::Righty),
+            1 => (next_char_pos(&self.text, pos).unwrap(), Skew::Lefty),
             _ => panic!(),
         }
     }    

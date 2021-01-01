@@ -4,6 +4,7 @@ use wio::com::ComPtr;
 use crate::{AppCtx, Cur};
 use crate::text_layout::{TextLayout, CursorCoord};
 use crate::types::*;
+use crate::text_layout::Skew;
 
 impl Node {
     pub(crate) fn line_layout(&self, idx: usize, ctx: &AppCtx) -> &TextLayout {
@@ -69,7 +70,7 @@ impl Block {
                 let (node, line_idx) = self.node_line_idx(
                     self.children.len() - 1, blocks).unwrap();
                 let layout = nodes[node].line_layout(line_idx, ctx);
-                layout.cursor_coord(layout.text.len()).height
+                layout.cursor_coord((layout.text.len(), Skew::default())).height
             }
             BlockChild::Block(b) => blocks[b].last_line_height(ctx, blocks, nodes),
         }
@@ -115,7 +116,7 @@ impl Block {
         idx: usize,
         (x, y): (f32, f32),
         ctx: &AppCtx, blocks: &Blocks, nodes: &Nodes,
-    ) -> usize {
+    ) -> (usize, Skew) {
         match self.children[idx] {
             BlockChild::Leaf => {
                 let (node, line_idx) = self.node_line_idx(idx, blocks).unwrap();
@@ -125,9 +126,9 @@ impl Block {
             BlockChild::Block(_) => {
                 let w = self.child_size(idx, ctx, blocks, nodes).0;
                 if x < 0.5 * w {
-                    0
+                    (0, Skew::default())
                 } else {
-                    1
+                    (1, Skew::default())
                 }
             }
         }
@@ -197,18 +198,18 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
         blocks: &Blocks,
         nodes: &Nodes,
     ) {
-        let mut cur_pos = None;
+        let mut cur_pos_skew = None;
         let mut sel = None;
         if block == self.cur.block {
             if idx == self.cur.line {
-                cur_pos = Some(self.cur.pos);
+                cur_pos_skew = Some(self.cur.pos_skew);
             }
 
             if let Some(s) = &self.cur.sel {
                 let (start_line, start_pos) =
-                    (self.cur.line, self.cur.pos).min((s.line, s.pos));
+                    (self.cur.line, self.cur.pos()).min((s.line, s.pos));
                 let (end_line, end_pos) =
-                    (self.cur.line, self.cur.pos).max((s.line, s.pos));
+                    (self.cur.line, self.cur.pos()).max((s.line, s.pos));
                 if start_line <= idx && idx <= end_line {
                     let sel_start_pos = if start_line == idx {
                         start_pos
@@ -337,8 +338,8 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
                 }
             }
         }
-        if let Some(pos) = cur_pos {
-            let cc = b.cursor_coord(idx, pos, self.ctx, blocks, nodes);
+        if let Some(pos_skew) = cur_pos_skew {
+            let cc = b.cursor_coord(idx, pos_skew, self.ctx, blocks, nodes);
             draw_cursor(&self.ctx.render_target, &self.ctx.cursor_brush, x, y, &cc);
         }        
     }
@@ -346,7 +347,7 @@ impl<'a> BlockVisitor for DrawVisitor<'a> {
 
 impl Block {
     pub(crate) fn cursor_coord(
-        &self, idx: usize, pos: usize,
+        &self, idx: usize, (pos, skew): (usize, Skew),
         ctx: &AppCtx,
         blocks: &Blocks, nodes: &Nodes,
     ) -> CursorCoord {
@@ -354,7 +355,7 @@ impl Block {
             BlockChild::Leaf => {
                 let (node, line_idx) = self.node_line_idx(idx, blocks).unwrap();
                 let layout = nodes[node].line_layout(line_idx, ctx);
-                layout.cursor_coord(pos)
+                layout.cursor_coord((pos, skew))
             }
             BlockChild::Block(b) => {
                 // TODO: get correct cursor height from child
@@ -375,20 +376,20 @@ impl Block {
     }
 
     pub(crate) fn abs_cur_x(
-        &self, idx: usize, pos: usize,
+        &self, idx: usize, (pos, skew): (usize, Skew),
         ctx: &AppCtx,
         blocks: &Blocks, nodes: &Nodes,
     ) -> f32 {
-        let cc = self.cursor_coord(idx, pos, ctx, blocks, nodes);
+        let cc = self.cursor_coord(idx, (pos, skew), ctx, blocks, nodes);
         X_OFFSET + self.depth as f32 * INDENT + cc.x
     }
 
     pub(crate) fn abs_cursor_coord(
-        &self, idx: usize, pos: usize,
+        &self, idx: usize, (pos, skew): (usize, Skew),
         ctx: &AppCtx,
         blocks: &Blocks, nodes: &Nodes,
     ) -> CursorCoord {
-        let mut cc = self.cursor_coord(idx, pos, ctx, blocks, nodes);
+        let mut cc = self.cursor_coord(idx, (pos, skew), ctx, blocks, nodes);
         cc.x += X_OFFSET + self.depth as f32 * INDENT;
 
         for child in 0..idx {
@@ -411,7 +412,7 @@ pub enum MouseResult {
     Cur {
         block: BlockKey,
         line: usize,
-        pos: usize,
+        pos_skew: (usize, Skew),
     },
     Toggle {
         block: BlockKey,
@@ -437,9 +438,9 @@ impl<'a> BlockVisitor for MouseClickVisitor<'a> {
                     let node = &nodes[node];
                     let layout = node.line_layout(line_idx, self.ctx);
                     if y <= self.y && self.y <= y + layout.height {
-                        let pos = layout.coords_to_pos(self.x - x, self.y - y);
+                        let pos_skew = layout.coords_to_pos(self.x - x, self.y - y);
                         if let MouseResult::Nothing = self.result {
-                            self.result = MouseResult::Cur { block, line: idx, pos };
+                            self.result = MouseResult::Cur { block, line: idx, pos_skew };
                         }
                     }
                 }
