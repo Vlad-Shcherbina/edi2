@@ -6,6 +6,8 @@ use crate::text_layout::{TextLayout, CursorCoord};
 use crate::types::*;
 use crate::text_layout::Skew;
 
+pub const MAX_WIDTH: f32 = 500.0;
+
 impl Node {
     pub(crate) fn line_layout(&self, idx: usize, ctx: &AppCtx) -> &TextLayout {
         let line = &self.lines[idx];
@@ -22,12 +24,12 @@ impl Node {
                             &ctx.normal_text_format
                         },
                         text,
-                        500.0),
+                        MAX_WIDTH),
                 Line::Node { local_header, .. } => 
                     TextLayout::new(
                         &ctx.dwrite_factory,
                         &ctx.header_text_format,
-                        local_header, 500.0),
+                        local_header, MAX_WIDTH),
             }
         })
     }

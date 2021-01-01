@@ -1,4 +1,5 @@
 use super::*;
+use crate::gfx::MAX_WIDTH;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CmdClass {
@@ -875,16 +876,31 @@ impl App {
 
     pub fn home(&mut self) -> CmdResult {
         self.sink_cursor();
-        self.cur.pos_skew = (0, Skew::default());
+
+        let blocks = &self.blocks;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let layout = self.nodes[node].line_layout(line_idx, &self.ctx);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
+
+        self.cur.pos_skew = layout.coords_to_pos(0.0, cc.top + 0.5 * cc.height);
+
         CmdResult::regular()
     }
 
     pub fn end(&mut self) -> CmdResult {
         self.sink_cursor();
-        let b = &self.blocks[self.cur.block];
-        self.cur.pos_skew = (
-            b.max_pos(self.cur.line, &self.blocks, &self.nodes),
-            Skew::default());
+
+        let blocks = &self.blocks;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let layout = self.nodes[node].line_layout(line_idx, &self.ctx);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
+
+        self.cur.pos_skew = layout.coords_to_pos(MAX_WIDTH + 100.0, cc.top + 0.5 * cc.height);
+
         CmdResult::regular()
     }
 
@@ -897,7 +913,21 @@ impl App {
             anchor_path: vec![],
         });
 
-        self.cur.pos_skew = (0, Skew::default());
+        let blocks = &self.blocks;
+
+        let b = &blocks[self.cur.block];
+        match b.children[self.cur.line] {
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let layout = self.nodes[node].line_layout(line_idx, &self.ctx);
+                let cc = layout.cursor_coord(self.cur.pos_skew);
+
+                self.cur.pos_skew = layout.coords_to_pos(0.0, cc.top + 0.5 * cc.height);
+            },
+            BlockChild::Block(_) => {
+                self.cur.pos_skew = (0, Skew::default());
+            },
+        }
 
         if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
             self.cur.sel = None;
@@ -915,10 +945,21 @@ impl App {
             anchor_path: vec![],
         });
 
-        let b = &self.blocks[self.cur.block];
-        self.cur.pos_skew = (
-            b.max_pos(self.cur.line, &self.blocks, &self.nodes),
-            Skew::default());
+        let blocks = &self.blocks;
+
+        let b = &blocks[self.cur.block];
+        match b.children[self.cur.line] {
+            BlockChild::Leaf => {
+                let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+                let layout = self.nodes[node].line_layout(line_idx, &self.ctx);
+                let cc = layout.cursor_coord(self.cur.pos_skew);
+
+                self.cur.pos_skew = layout.coords_to_pos(MAX_WIDTH + 100.0, cc.top + 0.5 * cc.height);
+            },
+            BlockChild::Block(_) => {
+                self.cur.pos_skew = (1, Skew::default());
+            },
+        }
 
         if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
             self.cur.sel = None;
