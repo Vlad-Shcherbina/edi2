@@ -4,6 +4,7 @@ use wio::wide::ToWide;
 use winapi::um::dwrite::*;
 use winapi::shared::winerror::*;
 use crate::win_util::*;
+use crate::util::*;
 
 pub struct TextLayout {
     pub raw: ComPtr<IDWriteTextLayout>,
@@ -89,9 +90,13 @@ impl TextLayout {
             )
         };
         assert!(hr == S_OK, "0x{:x}", hr);
-        let wide_pos = metrics.textPosition as usize + is_trailing_hit as usize;
 
-        wide_pos_to_pos(wide_pos, &self.text)
+        let pos = wide_pos_to_pos(metrics.textPosition.try_into().unwrap(), &self.text);
+        match is_trailing_hit {
+            0 => pos,
+            1 => next_char_pos(&self.text, pos).unwrap(),
+            _ => panic!(),
+        }
     }    
 }
 
