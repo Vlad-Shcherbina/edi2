@@ -2,8 +2,8 @@
     windows_subsystem = "windows")]  // prevent console
 
 #![feature(bindings_after_at)]
-#![feature(untagged_unions)]
 #![feature(backtrace)]
+#![feature(destructuring_assignment)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::too_many_arguments)]
 
@@ -902,14 +902,18 @@ impl WindowProcState for App {
                         }
                     ),
                     VK_UP => Some(
-                        if shift_pressed {
+                        if alt_pressed {
+                            app.alt_up()
+                        } else if shift_pressed {
                             app.shift_up()
                         } else {
                             app.up()
                         }
                     ),
                     VK_DOWN => Some(
-                        if shift_pressed {
+                        if alt_pressed {
+                            app.alt_down()
+                        } else if shift_pressed {
                             app.shift_down()
                         } else {
                             app.down()

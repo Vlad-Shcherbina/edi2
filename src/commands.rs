@@ -932,6 +932,209 @@ impl App {
         CmdResult::regular()
     }
 
+    pub fn alt_up(&mut self) -> CmdResult {
+        let block;
+        let first_line;
+        let last_line;
+        let stepped_up;
+        match self.cur.sel.as_ref() {
+            Some(sel) => {
+                if self.cur.line == 0 || sel.line == 0 {
+                    (block, first_line) = self.blocks[self.cur.block].parent_idx.unwrap();
+                    last_line = first_line + 1;
+                    stepped_up = true;
+                } else {
+                    block = self.cur.block;
+                    first_line = self.cur.line.min(sel.line);
+                    let last_line_pos =
+                        (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
+                    last_line = if last_line_pos.1 == 0 {
+                        last_line_pos.0
+                    } else {
+                        last_line_pos.0 + 1
+                    };
+                    stepped_up = false;
+                }
+            }
+            None => {
+                if self.cur.line == 0 {
+                    (block, first_line) = self.blocks[self.cur.block].parent_idx.unwrap();
+                    last_line = first_line + 1;
+                    stepped_up = true;
+                } else {
+                    block = self.cur.block;
+                    first_line = self.cur.line;
+                    last_line = self.cur.line + 1;
+                    stepped_up = false;
+                }
+            }
+        }
+
+        let mut pb = block;
+        while let Some((p, _)) = self.blocks[pb].parent_idx {
+            pb = p;
+            if pb == block {
+                println!("TODO: alt_up() with cycles");
+                return CmdResult::nothing();
+            }
+        }
+
+        assert!(first_line > 0);
+        if first_line == 1 {
+            return CmdResult::nothing();
+        }
+        assert!(first_line > 1);
+        assert!(first_line < last_line);
+        assert!(last_line <= self.blocks[block].children.len());
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+        let cblocks = &mut self.cblocks;
+
+        let node = blocks[block].node;
+
+        let moved_line = splice_node_lines(
+            node,
+            first_line - 1 - 1, first_line - 1,
+            vec![],
+            blocks, cblocks, nodes,
+            &mut undo_group.edits, &mut self.unsaved);
+        let last_line = last_line - 1;
+        splice_node_lines(
+            node,
+            last_line - 1, last_line - 1,
+            moved_line,
+            blocks, cblocks, nodes,
+            &mut undo_group.edits, &mut self.unsaved);
+
+        if stepped_up {
+            // cursor will be in the right place automatically
+        } else {
+            assert!(self.cur.line > 0);
+            self.cur.line -= 1;
+            if let Some(sel) = self.cur.sel.as_mut() {
+                assert!(sel.line > 0);
+                sel.line -= 1;
+            }
+        }
+
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
+
+        CmdResult::regular()
+    }
+
+    pub fn alt_down(&mut self) -> CmdResult {
+        let block;
+        let first_line;
+        let last_line;
+        let stepped_up;
+        match self.cur.sel.as_ref() {
+            Some(sel) => {
+                if self.cur.line == 0 || sel.line == 0 {
+                    (block, first_line) = self.blocks[self.cur.block].parent_idx.unwrap();
+                    last_line = first_line + 1;
+                    stepped_up = true;
+                } else {
+                    block = self.cur.block;
+                    first_line = self.cur.line.min(sel.line);
+                    let last_line_pos =
+                        (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
+                    last_line = if last_line_pos.1 == 0 {
+                        last_line_pos.0
+                    } else {
+                        last_line_pos.0 + 1
+                    };
+                    stepped_up = false;
+                }
+            }
+            None => {
+                if self.cur.line == 0 {
+                    (block, first_line) = self.blocks[self.cur.block].parent_idx.unwrap();
+                    last_line = first_line + 1;
+                    stepped_up = true;
+                } else {
+                    block = self.cur.block;
+                    first_line = self.cur.line;
+                    last_line = self.cur.line + 1;
+                    stepped_up = false;
+                }
+            }
+        }
+
+        let mut pb = block;
+        while let Some((p, _)) = self.blocks[pb].parent_idx {
+            pb = p;
+            if pb == block {
+                println!("TODO: alt_down() with cycles");
+                return CmdResult::nothing();
+            }
+        }
+
+        assert!(first_line >= 1);
+        assert!(first_line < last_line);
+        assert!(last_line <= self.blocks[block].children.len());
+        if last_line == self.blocks[block].children.len() {
+            return CmdResult::nothing();
+        }
+
+        let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+        let blocks = &mut self.blocks;
+        let nodes = &mut self.nodes;
+        let cblocks = &mut self.cblocks;
+
+        let node = blocks[block].node;
+
+        let moved_line = splice_node_lines(
+            node,
+            last_line - 1, last_line - 1 + 1,
+            vec![],
+            blocks, cblocks, nodes,
+            &mut undo_group.edits, &mut self.unsaved);
+        splice_node_lines(
+            node,
+            first_line - 1, first_line - 1,
+            moved_line,
+            blocks, cblocks, nodes,
+            &mut undo_group.edits, &mut self.unsaved);
+
+        if stepped_up {
+            // cursor will be in the right place automatically
+        } else {
+            self.cur.line += 1;
+            if let Some(sel) = self.cur.sel.as_mut() {
+                sel.line += 1;
+
+                if self.cur.line == blocks[block].children.len() {
+                    assert_eq!(self.cur.pos_skew.0, 0);
+                    self.cur.line -= 1;
+                    self.cur.pos_skew = (
+                        blocks[block].max_pos(self.cur.line, blocks, nodes),
+                        Skew::default());
+                }
+
+                if sel.line == blocks[block].children.len() {
+                    assert_eq!(sel.pos, 0);
+                    sel.line -= 1;
+                    sel.pos = blocks[block].max_pos(sel.line, blocks, nodes);
+                }
+
+                assert!(sel.line < blocks[block].children.len());
+
+                if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
+                    self.cur.sel = None;
+                }
+            }
+            assert!(self.cur.line < blocks[block].children.len());
+        }
+
+        self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+        self.redo_buf.clear();
+
+        CmdResult::regular()
+    }
+
     pub fn home(&mut self) -> CmdResult {
         self.sink_cursor();
 
