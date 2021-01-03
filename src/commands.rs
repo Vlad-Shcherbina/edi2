@@ -1614,10 +1614,49 @@ impl App {
     }
 
     pub fn toggle_monospace(&mut self) -> CmdResult {
-        if self.cur.sel.is_some() {
-            return CmdResult::nothing();  // TODO
+        let first_line;
+        let last_line;
+        match self.cur.sel.as_ref() {
+            Some(sel) => {
+                first_line = self.cur.line.min(sel.line);
+                let last_line_pos =
+                    (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
+                last_line = if last_line_pos.1 == 0 {
+                    last_line_pos.0
+                } else {
+                    last_line_pos.0 + 1
+                };
+            }
+            None => {
+                first_line = self.cur.line;
+                last_line = self.cur.line + 1;
+            }
         }
-        if self.cur.line == 0 {
+
+        let first_line = first_line.max(1);
+        let last_line = last_line.max(1);
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let mut has_proportional = false;
+        let mut has_monospace = false;
+        for i in first_line..last_line {
+            let b = &blocks[self.cur.block];
+            match b.children[i] {
+                BlockChild::Leaf => {}
+                BlockChild::Block(_) => continue,
+            }
+            let (node, line_idx) = b.node_line_idx(i, blocks).unwrap();
+            let line = &nodes[node].lines[line_idx].line;
+            match line {
+                Line::Text { monospace: false, .. } => has_proportional = true,
+                Line::Text { monospace: true, .. } => has_monospace = true,
+                Line::Node { .. } => {}
+            };
+        }
+
+        if !has_monospace && !has_proportional {
             return CmdResult::nothing();
         }
 
@@ -1626,27 +1665,33 @@ impl App {
         let blocks = &mut self.blocks;
         let nodes = &mut self.nodes;
 
-        let b = &blocks[self.cur.block];
-        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
-        let line = &nodes[node].lines[line_idx].line;
+        let monospace = has_proportional;
 
-        let new_line = match line {
-            Line::Text { text, monospace } =>
-                Line::Text {
-                    text: text.to_owned(),
-                    monospace: !*monospace,
-                },
-            Line::Node {..} => panic!(),
-        };
-
-        splice_node_lines(
-            node,
-            line_idx, line_idx + 1, vec![new_line],
-            blocks, &mut self.cblocks, nodes,
-            &mut undo_group.edits,
-            &mut self.unsaved);
-
-        self.sink_cursor();
+        for i in first_line..last_line {
+            let b = &blocks[self.cur.block];
+            match b.children[i] {
+                BlockChild::Leaf => {}
+                BlockChild::Block(_) => continue,
+            }
+            let (node, line_idx) = b.node_line_idx(i, blocks).unwrap();
+            let line = &nodes[node].lines[line_idx].line;
+            match line {
+                Line::Text { text, monospace: _ } => {
+                    let new_line = Line::Text {
+                        text: text.to_owned(),
+                        monospace,
+                    };
+                    // TODO: this is potentially quadratic
+                    splice_node_lines(
+                        node,
+                        line_idx, line_idx + 1, vec![new_line],
+                        blocks, &mut self.cblocks, nodes,
+                        &mut undo_group.edits,
+                        &mut self.unsaved);
+                }
+                Line::Node {..} => {}
+            };
+        }
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
