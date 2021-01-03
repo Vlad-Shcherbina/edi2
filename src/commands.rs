@@ -331,6 +331,9 @@ impl App {
                 return CmdResult::regular();
             }
             if self.cur.block == self.root_block {
+                if self.cur.line == sel.line && self.cur.pos_skew.0 == sel.pos {
+                    self.cur.sel = None;
+                }
                 return CmdResult::regular();
             }
 
