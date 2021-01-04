@@ -302,3 +302,21 @@ pub fn next_leaf(
         }
     }
 }
+
+pub fn reachable_from(root: NodeKey, node: NodeKey, nodes: &Nodes) -> bool {
+    let mut visited = FnvHashSet::default();
+    visited.insert(node);
+    let mut q = vec![node];
+    while let Some(u) = q.pop() {
+        if u == root {
+            return true;
+        }
+        for &p in nodes[u].parents.keys() {
+            if !visited.contains(&p) {
+                visited.insert(p);
+                q.push(p);
+            }
+        }
+    }
+    false
+}

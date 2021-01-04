@@ -1,3 +1,4 @@
+use fnv::FnvHashMap;
 use super::*;
 use crate::gfx::MAX_WIDTH;
 
@@ -1717,6 +1718,101 @@ impl App {
             expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
             CmdResult::regular()
         }
+    }
+
+    pub fn ctrl_tab(&mut self, shift: bool) -> CmdResult {
+        if self.cur.sel.is_some() {
+            return CmdResult::nothing();  // TODO?
+        }
+        if self.cur.line != 0 {
+            return CmdResult::nothing();
+        }
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let mut candidates = vec![];
+
+        let node = blocks[self.cur.block].node;
+        for &parent in nodes[node].parents.keys() {
+            if !reachable_from(blocks[self.root_block].node, parent, nodes) {
+                continue;
+            }
+            for (i, line) in nodes[parent].lines.iter().enumerate() {
+                match line.line {
+                    Line::Text { .. } => {}
+                    Line::Node { node: n, .. } =>
+                        if n == node {
+                            candidates.push((parent, i + 1));
+                        }
+                }
+            }
+        }
+
+        // Find next candidaty in the cycle.
+        candidates.sort_by_key(|&(node, line)| (nodes[node].db_key, line));
+        if shift {
+            candidates.reverse();
+        }
+        let (parent_block, idx) = blocks[self.cur.block].parent_idx.unwrap();
+        let parent_node = blocks[parent_block].node;
+        let pos = candidates.iter().position(|&t| t == (parent_node, idx)).unwrap();
+        let (parent_node, line) = candidates[(pos + 1) % candidates.len()];
+
+        // Find expanded ancestor block nearest to the candidate.
+        let mut visited = FnvHashMap::default();
+        visited.insert(parent_node, None);
+        let mut frontier = vec![parent_node];
+        let (mut block, mut node) = 'outer: loop {
+            assert!(!frontier.is_empty());
+            let mut next_frontier = vec![];
+            for u in frontier {
+                for &block in &nodes[u].blocks {
+                    if blocks[block].is_expanded() {
+                        break 'outer (block, u);
+                    }
+                }
+                for &p in nodes[u].parents.keys() {
+                    visited.entry(p).or_insert_with(|| {
+                        next_frontier.push(p);
+                        Some(u)
+                    });
+                }
+            }
+            frontier = next_frontier;
+        };
+
+        // Expand all blocks on the path to the candidate.
+        let blocks = &mut self.blocks;
+        let cblocks = &mut self.cblocks;
+        let nodes = &mut self.nodes;
+        while let Some(next_node) = visited[&node] {
+            assert_eq!(blocks[block].node, node);
+            let next_block = blocks[block].children.iter().filter_map(|child| {
+                match *child {
+                    BlockChild::Leaf => None,
+                    BlockChild::Block(b) => if blocks[b].node == next_node {
+                        Some(b)
+                    } else {
+                        None
+                    }
+                }
+            }).next().unwrap();
+            if !blocks[next_block].is_expanded() {
+                expand_block(next_block, blocks, cblocks, nodes, &mut self.unsaved);
+            }
+            block = next_block;
+            node = next_node;
+        }
+
+        assert_eq!(blocks[block].node, parent_node);
+        self.cur.block = match blocks[block].children[line] {
+            BlockChild::Leaf => panic!(),
+            BlockChild::Block(b) => b,
+        };
+        self.cur.line = 0;
+        self.cur.pos_skew = (0, Skew::default());
+
+        CmdResult::regular()
     }
 
     pub fn copy(&mut self) -> (Vec<Line>, String) {

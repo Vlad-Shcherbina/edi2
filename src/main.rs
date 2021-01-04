@@ -957,6 +957,11 @@ impl WindowProcState for App {
                     } else {
                         Some(app.del())
                     }
+                    VK_TAB => if ctrl_pressed {
+                        Some(app.ctrl_tab(shift_pressed))
+                    } else {
+                        None
+                    }
                     _ => None
                 };
                 if let Some(cmd_res) = cmd_res {
