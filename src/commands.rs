@@ -46,17 +46,21 @@ impl Drop for CmdResult {
 }
 
 impl App {
-    pub fn scroll(&mut self, delta: f32) -> CmdResult {
+    fn clamp_y_offset(&mut self) {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
-        // TODO: use actual line height
-        self.y_offset += delta * 18.0;
         self.y_offset = self.y_offset.min(10.0);
         let height = blocks[self.root_block].size(&self.ctx, blocks, nodes).1;
         let max_offset = 10.0 - height
             + blocks[self.root_block].last_line_height(&self.ctx, blocks, nodes);
-        self.y_offset = self.y_offset.max(max_offset);
+        self.y_offset = self.y_offset.max(max_offset);        
+    }
+
+    pub fn scroll(&mut self, delta: f32) -> CmdResult {
+        // TODO: use actual line height
+        self.y_offset += delta * 18.0;
+        self.clamp_y_offset();
 
         CmdResult {
             repaint: true,
@@ -1730,6 +1734,10 @@ impl App {
         let blocks = &self.blocks;
         let nodes = &self.nodes;
 
+        let orig_cc = blocks[self.cur.block].abs_cursor_coord(
+            self.cur.line, (0, Skew::default()),
+            &self.ctx, blocks, nodes);
+
         let mut candidates = vec![];
 
         let node = blocks[self.cur.block].node;
@@ -1811,6 +1819,13 @@ impl App {
         };
         self.cur.line = 0;
         self.cur.pos_skew = (0, Skew::default());
+
+        let new_cc = blocks[self.cur.block].abs_cursor_coord(
+            self.cur.line, (0, Skew::default()),
+            &self.ctx, blocks, nodes);
+
+        self.y_offset -= new_cc.top - orig_cc.top;
+        self.clamp_y_offset();
 
         CmdResult::regular()
     }
