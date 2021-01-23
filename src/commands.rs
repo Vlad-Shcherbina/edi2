@@ -139,7 +139,7 @@ impl App {
         }
     }
 
-    pub fn left(&mut self) -> CmdResult {
+    pub fn left(&mut self, ctrl: bool) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -152,7 +152,12 @@ impl App {
                 let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
                 let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
-                if let Some(pos) = prev_char_pos(text, self.cur.pos()) {
+                let prev_pos = if ctrl {
+                    prev_word_pos(text, self.cur.pos())
+                } else {
+                    prev_char_pos(text, self.cur.pos())
+                };
+                if let Some(pos) = prev_pos {
                     self.cur.pos_skew = (pos, Skew::Righty);
                     return CmdResult::regular();
                 }
@@ -173,7 +178,7 @@ impl App {
         CmdResult::regular()
     }
 
-    pub fn right(&mut self) -> CmdResult {
+    pub fn right(&mut self, ctrl: bool) -> CmdResult {
         self.sink_cursor();
 
         let blocks = &self.blocks;
@@ -186,7 +191,12 @@ impl App {
                 let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
                 let node = &nodes[node];
                 let text = &node.lines[line_idx].line.text();
-                if let Some(pos) = next_char_pos(text, self.cur.pos()) {
+                let next_pos = if ctrl {
+                    next_word_pos(text, self.cur.pos())
+                } else {
+                    next_char_pos(text, self.cur.pos())
+                };
+                if let Some(pos) = next_pos {
                     self.cur.pos_skew = (pos, Skew::Righty);
                     return CmdResult::regular();
                 }

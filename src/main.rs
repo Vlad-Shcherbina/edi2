@@ -889,7 +889,7 @@ impl WindowProcState for App {
                         } else if shift_pressed {
                             app.shift_left()
                         } else {
-                            app.left()
+                            app.left(ctrl_pressed)
                         }
                     ),
                     VK_RIGHT => Some(
@@ -898,7 +898,7 @@ impl WindowProcState for App {
                         } else if shift_pressed {
                             app.shift_right()
                         } else {
-                            app.right()
+                            app.right(ctrl_pressed)
                         }
                     ),
                     VK_UP => Some(
