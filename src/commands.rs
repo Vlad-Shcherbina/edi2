@@ -212,7 +212,7 @@ impl App {
         CmdResult::regular()
     }
 
-    pub fn shift_left(&mut self) -> CmdResult {
+    pub fn shift_left(&mut self, ctrl: bool) -> CmdResult {
         let line = self.cur.line;
         let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
@@ -233,7 +233,12 @@ impl App {
                     let (node, line_idx) = blocks[self.cur.block]
                         .node_line_idx(self.cur.line, blocks).unwrap();
                     let text = &nodes[node].lines[line_idx].line.text();
-                    if let Some(pos) = prev_char_pos(text, pos) {
+                    let prev_pos = if ctrl {
+                        prev_word_pos(text, pos)
+                    } else {
+                        prev_char_pos(text, pos)
+                    };
+                    if let Some(pos) = prev_pos {
                         self.cur.pos_skew = (pos, Skew::Righty);
                         return CmdResult::regular();
                     }
@@ -270,7 +275,12 @@ impl App {
                         let (node, line_idx) = blocks[self.cur.block]
                             .node_line_idx(self.cur.line, blocks).unwrap();
                         let text = &nodes[node].lines[line_idx].line.text();
-                        if let Some(pos) = prev_char_pos(text, pos) {
+                        let prev_pos = if ctrl {
+                            prev_word_pos(text, pos)
+                        } else {
+                            prev_char_pos(text, pos)
+                        };
+                        if let Some(pos) = prev_pos {
                             self.cur.pos_skew = (pos, Skew::Righty);
                             break;
                         }                               
@@ -313,7 +323,7 @@ impl App {
         CmdResult::regular()
     }
 
-    pub fn shift_right(&mut self) -> CmdResult {
+    pub fn shift_right(&mut self, ctrl: bool) -> CmdResult {
         let line = self.cur.line;
         let pos = self.cur.pos();
         let sel = self.cur.sel.get_or_insert_with(|| Sel {
@@ -334,7 +344,12 @@ impl App {
                     let (node, line_idx) = blocks[self.cur.block]
                         .node_line_idx(self.cur.line, blocks).unwrap();
                     let text = &nodes[node].lines[line_idx].line.text();
-                    if let Some(pos) = next_char_pos(text, pos) {
+                    let next_pos = if ctrl {
+                        next_word_pos(text, pos)
+                    } else {
+                        next_char_pos(text, pos)
+                    };
+                    if let Some(pos) = next_pos {
                         self.cur.pos_skew = (pos, Skew::Righty);
                         return CmdResult::regular();
                     }                        
@@ -371,7 +386,12 @@ impl App {
                         let (node, line_idx) = blocks[self.cur.block]
                             .node_line_idx(self.cur.line, blocks).unwrap();
                         let text = &nodes[node].lines[line_idx].line.text();
-                        if let Some(pos) = next_char_pos(text, pos) {
+                        let next_pos = if ctrl {
+                            next_word_pos(text, pos)
+                        } else {
+                            next_char_pos(text, pos)
+                        };
+                        if let Some(pos) = next_pos {
                             self.cur.pos_skew = (pos, Skew::Lefty);
                             break;
                         }                               

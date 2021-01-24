@@ -887,7 +887,7 @@ impl WindowProcState for App {
                         if alt_pressed {
                             app.alt_left()
                         } else if shift_pressed {
-                            app.shift_left()
+                            app.shift_left(ctrl_pressed)
                         } else {
                             app.left(ctrl_pressed)
                         }
@@ -896,7 +896,7 @@ impl WindowProcState for App {
                         if alt_pressed {
                             app.alt_right()
                         } else if shift_pressed {
-                            app.shift_right()
+                            app.shift_right(ctrl_pressed)
                         } else {
                             app.right(ctrl_pressed)
                         }
