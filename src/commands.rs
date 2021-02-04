@@ -1825,7 +1825,7 @@ impl App {
         let nodes = &mut self.nodes;
         while let Some(next_node) = visited[&node] {
             assert_eq!(blocks[block].node, node);
-            let next_block = blocks[block].children.iter().filter_map(|child| {
+            let next_block = blocks[block].children.iter().find_map(|child| {
                 match *child {
                     BlockChild::Leaf => None,
                     BlockChild::Block(b) => if blocks[b].node == next_node {
@@ -1834,7 +1834,7 @@ impl App {
                         None
                     }
                 }
-            }).next().unwrap();
+            }).unwrap();
             if !blocks[next_block].is_expanded() {
                 expand_block(next_block, blocks, cblocks, nodes, &mut self.unsaved);
             }
