@@ -1863,7 +1863,11 @@ impl App {
     pub fn copy(&mut self) -> (Vec<Line>, String) {
         let sel = match self.cur.sel.as_ref() {
             Some(sel) => sel,
-            None => return (vec![], String::new()),  // TODO: copy whole line/node?
+            None => {
+                let lines = vec![Line::Text { text: String::new(), monospace: false }];
+                return (lines, String::new());
+                // TODO: copy whole line/node?
+            }
         };
         let (line1, pos1) = (self.cur.line, self.cur.pos()).min((sel.line, sel.pos));
         let (line2, pos2) = (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
