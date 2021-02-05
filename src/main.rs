@@ -142,9 +142,19 @@ pub struct Sel {
     anchor_path: Vec<(usize, usize)>,
 }
 
+#[derive(Clone)]
+enum ClipboardContent {
+    Segment {
+        lines: Vec<Line>,
+    },
+    WholeLine {
+        line: Line,
+    },
+}
+
 struct Clipboard {
     sequence_number: u32,
-    lines: Vec<Line>,
+    content: ClipboardContent,
 }
 
 struct UndoGroup {
@@ -701,7 +711,7 @@ fn paint(app: &mut App) {
 
 fn cut(hwnd: HWND, mut sr: StateRef<App>) {
     let mut app = sr.state_mut();
-    let (lines, plain_text, res) = app.cut();
+    let (content, plain_text, res) = app.cut();
     drop(app);
 
     let mut cm = ClipboardManager::open(hwnd);
@@ -712,14 +722,14 @@ fn cut(hwnd: HWND, mut sr: StateRef<App>) {
     let mut app = sr.state_mut();
     app.clipboard = Some(Clipboard {
         sequence_number: get_clipboard_sequence_number(),
-        lines,
+        content,
     });
     res.process(hwnd, &mut app);
 }
 
 fn copy(hwnd: HWND, mut sr: StateRef<App>) {
     let app = sr.state_mut();
-    let (lines, plain_text) = app.copy();
+    let (content, plain_text) = app.copy();
     drop(app);
     let mut cm = ClipboardManager::open(hwnd);
     cm.empty(sr.reent());
@@ -729,7 +739,7 @@ fn copy(hwnd: HWND, mut sr: StateRef<App>) {
     let mut app = sr.state_mut();
     app.clipboard = Some(Clipboard {
         sequence_number: get_clipboard_sequence_number(),
-        lines,
+        content,
     });
     CmdResult::regular().process(hwnd, &mut app);
 }
@@ -744,13 +754,13 @@ fn paste(hwnd: HWND, mut sr: StateRef<App>) {
     let cmd_res = if has_private {
         let clipboard = app.clipboard.as_ref().unwrap(); 
         assert_eq!(clipboard.sequence_number, get_clipboard_sequence_number());                    
-        let lines = clipboard.lines.clone();
-        app.paste(lines)
+        let content = clipboard.content.clone();
+        app.paste(content)
     } else if let Some(plain_text) = plain_text {
         let lines: Vec<Line> = plain_text.split('\n')
             .map(|s| Line::Text { text: s.to_owned(), monospace: false })
             .collect();
-        app.paste(lines)
+        app.paste(ClipboardContent::Segment { lines })
     } else {
         CmdResult::nothing()
     };

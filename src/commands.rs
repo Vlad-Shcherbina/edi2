@@ -1860,7 +1860,7 @@ impl App {
         CmdResult::regular()
     }
 
-    pub fn copy(&self) -> (Vec<Line>, String) {
+    pub fn copy(&self) -> (ClipboardContent, String) {
         if self.cur.sel.is_some() {
             self.copy_selection()
         } else {
@@ -1871,16 +1871,13 @@ impl App {
             };
             assert!(line > 0);
             let ln = &self.nodes[self.blocks[block].node].lines[line - 1].line;
-            let lines = vec![
-                ln.clone(),
-                Line::Text { text: String::new(), monospace: false },
-            ];
+            let content = ClipboardContent::WholeLine { line: ln.clone() };
             let plain_text = format!("{}\n", ln.text());
-            (lines, plain_text)
+            (content, plain_text)
         }
     }
 
-    pub fn cut(&mut self) -> (Vec<Line>, String, CmdResult) {
+    pub fn cut(&mut self) -> (ClipboardContent, String, CmdResult) {
         if self.cur.sel.is_some() {
             let (lines, plain_text) = self.copy();
             let res = self.replace_selection_with(
@@ -1907,10 +1904,7 @@ impl App {
             assert!(line > 0);
 
             let ln = &self.nodes[self.blocks[block].node].lines[line - 1].line;
-            let lines = vec![
-                ln.clone(),
-                Line::Text { text: String::new(), monospace: false },
-            ];
+            let content = ClipboardContent::WholeLine { line: ln.clone() };
             let plain_text = format!("{}\n", ln.text());
 
             let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
@@ -1949,11 +1943,11 @@ impl App {
             self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
             self.redo_buf.clear();
 
-            (lines, plain_text, CmdResult::regular())
+            (content, plain_text, CmdResult::regular())
         }
     }
 
-    pub fn copy_selection(&self) -> (Vec<Line>, String) {
+    pub fn copy_selection(&self) -> (ClipboardContent, String) {
         let sel = self.cur.sel.as_ref().unwrap();
         let (line1, pos1) = (self.cur.line, self.cur.pos()).min((sel.line, sel.pos));
         let (line2, pos2) = (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
@@ -1996,11 +1990,37 @@ impl App {
                 plain_text.push('\n');
             }
         }
-        (lines, plain_text)
+        (ClipboardContent::Segment { lines }, plain_text)
     }
 
-    pub fn paste(&mut self, lines: Vec<Line>) -> CmdResult {
-        self.replace_selection_with(lines)
+    pub fn paste(&mut self, content: ClipboardContent) -> CmdResult {
+        match content {
+            ClipboardContent::Segment { lines } => self.replace_selection_with(lines),
+            ClipboardContent::WholeLine { line } => {
+                let (block, line_no) = if self.cur.line == 0 {
+                    self.blocks[self.cur.block].parent_idx.unwrap()
+                } else {
+                    (self.cur.block, self.cur.line)
+                };
+                assert!(line_no > 0);
+                let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+
+                splice_node_lines(
+                    self.blocks[block].node,
+                    line_no - 1, line_no - 1, vec![line],
+                    &mut self.blocks, &mut self.cblocks, &mut self.nodes,
+                    &mut undo_group.edits,
+                    &mut self.unsaved);
+
+                if self.cur.line > 0 {
+                    self.cur.line += 1;
+                }
+
+                self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+                self.redo_buf.clear();
+                CmdResult::regular()
+            }
+        }
     }
 
     pub fn replace_selection_with(&mut self, lines: Vec<Line>) -> CmdResult {
