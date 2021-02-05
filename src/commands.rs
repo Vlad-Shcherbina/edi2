@@ -1860,15 +1860,101 @@ impl App {
         CmdResult::regular()
     }
 
-    pub fn copy(&mut self) -> (Vec<Line>, String) {
-        let sel = match self.cur.sel.as_ref() {
-            Some(sel) => sel,
-            None => {
-                let lines = vec![Line::Text { text: String::new(), monospace: false }];
-                return (lines, String::new());
-                // TODO: copy whole line/node?
+    pub fn copy(&self) -> (Vec<Line>, String) {
+        if self.cur.sel.is_some() {
+            self.copy_selection()
+        } else {
+            let (block, line) = if self.cur.line == 0 {
+                self.blocks[self.cur.block].parent_idx.unwrap()
+            } else {
+                (self.cur.block, self.cur.line)
+            };
+            assert!(line > 0);
+            let ln = &self.nodes[self.blocks[block].node].lines[line - 1].line;
+            let lines = vec![
+                ln.clone(),
+                Line::Text { text: String::new(), monospace: false },
+            ];
+            let plain_text = format!("{}\n", ln.text());
+            (lines, plain_text)
+        }
+    }
+
+    pub fn cut(&mut self) -> (Vec<Line>, String, CmdResult) {
+        if self.cur.sel.is_some() {
+            let (lines, plain_text) = self.copy();
+            let res = self.replace_selection_with(
+                vec![Line::Text { text: String::new(), monospace: false }]);
+            (lines, plain_text, res)
+        } else {
+            let (block, line) = if self.cur.line == 0 {
+                let (mut block, line) = self.blocks[self.cur.block].parent_idx.unwrap();
+                let mut p = block;
+                loop {
+                    if self.blocks[p].node == self.blocks[block].node {
+                        block = p;
+                    }
+                    if let Some((p2, _)) = self.blocks[p].parent_idx {
+                        p = p2;
+                    } else {
+                        break;
+                    }
+                }
+                (block, line)
+            } else {
+                (self.cur.block, self.cur.line)
+            };
+            assert!(line > 0);
+
+            let ln = &self.nodes[self.blocks[block].node].lines[line - 1].line;
+            let lines = vec![
+                ln.clone(),
+                Line::Text { text: String::new(), monospace: false },
+            ];
+            let plain_text = format!("{}\n", ln.text());
+
+            let mut undo_group = UndoGroupBuilder::new(self.cur_waypoint());
+            splice_node_lines(
+                self.blocks[block].node,
+                line - 1, line - 1 + 1, vec![],
+                &mut self.blocks, &mut self.cblocks, &mut self.nodes,
+                &mut undo_group.edits,
+                &mut self.unsaved);
+
+            self.cur.block = block;
+            self.cur.line = line;
+            self.cur.pos_skew = (0, Skew::default());
+            while self.cur.line == self.blocks[self.cur.block].children.len() {
+                assert!(self.blocks[self.cur.block].is_expanded());
+                match self.blocks[self.cur.block].parent_idx {
+                    Some((p, i)) => {
+                        self.cur.block = p;
+                        self.cur.line = i + 1;
+                    }
+                    None => {
+                        assert_eq!(self.cur.block, self.root_block);
+                        splice_node_lines(
+                            self.blocks[self.root_block].node,
+                            self.cur.line - 1, self.cur.line - 1,
+                            vec![Line::Text { text: String::new(), monospace: false }],
+                            &mut self.blocks, &mut self.cblocks, &mut self.nodes,
+                            &mut undo_group.edits,
+                            &mut self.unsaved);
+                        break;
+                    }
+                }
             }
-        };
+            self.sink_cursor();
+
+            self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
+            self.redo_buf.clear();
+
+            (lines, plain_text, CmdResult::regular())
+        }
+    }
+
+    pub fn copy_selection(&self) -> (Vec<Line>, String) {
+        let sel = self.cur.sel.as_ref().unwrap();
         let (line1, pos1) = (self.cur.line, self.cur.pos()).min((sel.line, sel.pos));
         let (line2, pos2) = (self.cur.line, self.cur.pos()).max((sel.line, sel.pos));
 

@@ -701,7 +701,7 @@ fn paint(app: &mut App) {
 
 fn cut(hwnd: HWND, mut sr: StateRef<App>) {
     let mut app = sr.state_mut();
-    let (lines, plain_text) = app.copy();
+    let (lines, plain_text, res) = app.cut();
     drop(app);
 
     let mut cm = ClipboardManager::open(hwnd);
@@ -714,14 +714,11 @@ fn cut(hwnd: HWND, mut sr: StateRef<App>) {
         sequence_number: get_clipboard_sequence_number(),
         lines,
     });
-
-    let res = app.replace_selection_with(
-        vec![Line::Text { text: String::new(), monospace: false }]);
     res.process(hwnd, &mut app);
 }
 
 fn copy(hwnd: HWND, mut sr: StateRef<App>) {
-    let mut app = sr.state_mut();
+    let app = sr.state_mut();
     let (lines, plain_text) = app.copy();
     drop(app);
     let mut cm = ClipboardManager::open(hwnd);
