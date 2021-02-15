@@ -44,16 +44,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Slot<T> {
     }
 }
 
-impl<T> Drop for Slot<T> {
-    fn drop(&mut self) {
-        if std::mem::needs_drop::<T>() && self.occupied() {
-            unsafe {
-                ManuallyDrop::drop(&mut self.u.value);
-            }
-        }
-    }
-}
-
 pub struct SlotMap<K: Key, T> {
     slots: Vec<Slot<T>>,
     free: u32,
