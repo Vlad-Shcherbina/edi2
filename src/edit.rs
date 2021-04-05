@@ -204,7 +204,7 @@ pub fn splice_node_lines(
 
         let depth = blocks[block].depth;
 
-        let mut children = std::mem::replace(&mut blocks[block].children, vec![]);
+        let mut children = std::mem::take(&mut blocks[block].children);
         for child in &children[end_line + 1..] {
             match *child {
                 BlockChild::Leaf => {}

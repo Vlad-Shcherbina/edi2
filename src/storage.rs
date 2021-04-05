@@ -385,9 +385,9 @@ pub fn load_or_create(tx: &Transaction) -> AppInit {
     let cur = cur.into(root_block, &blocks);
 
     AppInit {
-        nodes,
         blocks,
         cblocks,
+        nodes,
         db_key_to_node_key,
         root_block,
         cur,

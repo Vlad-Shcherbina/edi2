@@ -189,7 +189,7 @@ impl UndoGroupBuilder {
             Waypoint { path: vec![], pos_skew: Default::default() });
         UndoGroup {
             cur_before,
-            edits: std::mem::replace(&mut self.edits, vec![]),
+            edits: std::mem::take(&mut self.edits),
             cur_after,
         }
     }
