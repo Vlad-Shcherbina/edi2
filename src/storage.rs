@@ -325,7 +325,7 @@ pub fn load_or_create(tx: &Transaction) -> AppInit {
     tx.prepare("SELECT key, data FROM node").unwrap()
     .query_map(params![], |row| {
         let key: i64 = row.get(0)?;
-        let data = row.get_raw(1).as_blob()?;
+        let data = row.get_ref(1)?.as_blob()?;
         let node: DiskNode = bincode::deserialize(data).unwrap();
         let node = node.into(key, &db_key_to_node_key);
         nodes[db_key_to_node_key[&key]] = node;
