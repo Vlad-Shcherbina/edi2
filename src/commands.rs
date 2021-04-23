@@ -1432,7 +1432,6 @@ impl App {
                 BlockChild::Block(b) => b,
             };
             self.cur.line = 0;
-            self.cur.pos_skew = (0, Skew::default());
         } else {
             // Create new bullet before.
             let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
@@ -1448,8 +1447,8 @@ impl App {
                 blocks, &mut self.cblocks, nodes,
                 &mut undo_group.edits,
                 &mut self.unsaved);
-            self.cur.pos_skew = (0, Skew::default());
         }
+        self.cur.pos_skew = (0, Skew::default());
 
         self.undo_buf.push(undo_group.finish(self.cur_waypoint()));
         self.redo_buf.clear();
