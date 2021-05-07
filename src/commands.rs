@@ -919,8 +919,11 @@ impl App {
         let nodes = &mut self.nodes;
 
         if !blocks[inner_block].is_expanded() {
-            // TODO: silent autoexpand if it's one-line node
             expand_block(inner_block, blocks, cblocks, nodes, &mut self.unsaved);
+            if blocks[inner_block].children.len() == 1 {
+                // silent autoexpand if it's one-line node
+                return self.alt_right();
+            }
             return CmdResult::regular();
         }
 
