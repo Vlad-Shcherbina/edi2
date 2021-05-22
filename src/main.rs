@@ -890,6 +890,11 @@ impl WindowProcState for App {
 
                 let mut app = sr.state_mut();
                 let cmd_res = match key_code {
+                    VK_F8 => if ctrl_pressed {
+                        panic!("intended panic");
+                    } else {
+                        None
+                    }
                     VK_LEFT => Some(
                         if alt_pressed {
                             app.alt_left()
