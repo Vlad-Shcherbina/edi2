@@ -6,4 +6,7 @@
 # So one has to change work directory to exe base dir before calling
 # backtrace::Backtrace::new()
 # (anchor:aIMTMDTQfJDYrJxa)
-rustflags = ["-C", "link-args=/PDBALTPATH:%_PDB%"]
+rustflags = [
+    "-C", "link-args=/PDBALTPATH:%_PDB%",
+    "-C", "target-feature=+crt-static",
+]
