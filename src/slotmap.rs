@@ -134,7 +134,6 @@ impl<K: Key, T> std::ops::IndexMut<K> for SlotMap<K, T> {
     }
 }
 
-#[macro_use]
 macro_rules! new_key_type {
     ($vis:vis $name:ident) => {
 
