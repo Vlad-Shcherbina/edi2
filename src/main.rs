@@ -805,8 +805,12 @@ impl WindowProcState for App {
                 let delta = GET_WHEEL_DELTA_WPARAM(wparam);
                 println!("{} {}", win_msg_name(msg), delta);
                 let delta = f32::from(delta) / 120.0 * get_wheel_scroll_lines() as f32;
+
+                let shift_pressed = unsafe { GetKeyState(VK_SHIFT) } as u16 & 0x8000 != 0;
+                let speed = if shift_pressed { 3.0 } else { 1.0 };
+
                 let app = &mut *sr.state_mut();
-                app.scroll(delta).process(hwnd, app);
+                app.scroll(delta * speed).process(hwnd, app);
             }
             WM_MOUSEMOVE => {
                 let x = GET_X_LPARAM(lparam);
