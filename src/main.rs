@@ -6,6 +6,7 @@
 #![feature(destructuring_assignment)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_collect)]  // this lint has many bugs; maybe enable later
 
 #[macro_use] pub mod slotmap;
 mod win_util;
