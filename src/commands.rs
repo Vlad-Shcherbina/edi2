@@ -1505,8 +1505,11 @@ impl App {
             }
 
             if !b.is_expanded() {
-                // TODO: silent autoexpand if it's one-line node
                 expand_block(self.cur.block, blocks, cblocks, nodes, &mut self.unsaved);
+                if blocks[self.cur.block].children.len() == 1 {
+                    // silent autoexpand if it's one-line node
+                    return self.backspace();
+                }
                 return CmdResult::regular();
             }
 
