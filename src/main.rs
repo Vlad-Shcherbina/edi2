@@ -936,6 +936,16 @@ impl WindowProcState for App {
                             app.down()
                         }
                     ),
+                    VK_PRIOR => {
+                        let rc = get_client_rect(hwnd);
+                        let height = (rc.bottom - rc.top) as f32;
+                        Some(app.page_up(height))
+                    }
+                    VK_NEXT => {
+                        let rc = get_client_rect(hwnd);
+                        let height = (rc.bottom - rc.top) as f32;
+                        Some(app.page_down(height))
+                    }
                     VK_BACK => Some(app.backspace()),
                     VK_HOME => Some(
                         if shift_pressed {

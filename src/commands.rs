@@ -430,6 +430,32 @@ impl App {
         CmdResult::regular()
     }
 
+    pub fn page_up(&mut self, height: f32) -> CmdResult {
+        let num_lines = ((height / 21.0) as i32).max(1);
+        for _ in 0..num_lines {
+            std::mem::forget(self.up());
+        }
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
+            class: CmdClass::Other,
+        }        
+    }
+
+    pub fn page_down(&mut self, height: f32) -> CmdResult {
+        let num_lines = ((height / 21.0) as i32).max(1);
+        for _ in 0..num_lines {
+            std::mem::forget(self.down());
+        }
+        CmdResult {
+            repaint: true,
+            update_anchor_x: false,
+            scroll_to_reveal_cursor: true,
+            class: CmdClass::Other,
+        }        
+    }
+
     pub fn up(&mut self) -> CmdResult {
         self.sink_cursor();
 
