@@ -2086,7 +2086,7 @@ impl App {
                 BlockChild::Leaf => {
                     let (node, line_idx) = b.node_line_idx(line, blocks).unwrap();
                     let line = nodes[node].lines[line_idx].line.slice(start_pos, end_pos);
-                    plain_text.push_str(&line.text());
+                    plain_text.push_str(line.text());
                     lines.push(line);
                 },
                 BlockChild::Block(_) => {

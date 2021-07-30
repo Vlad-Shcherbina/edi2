@@ -1,7 +1,6 @@
 #![cfg_attr(feature = "product",
     windows_subsystem = "windows")]  // prevent console
 
-#![feature(bindings_after_at)]
 #![feature(backtrace)]
 #![feature(destructuring_assignment)]
 #![allow(clippy::many_single_char_names)]
@@ -1079,7 +1078,7 @@ fn panic_hook(pi: &std::panic::PanicInfo) {
         if let Some(&s) = pi.payload().downcast_ref::<&str>() {
             s
         } else if let Some(s) = pi.payload().downcast_ref::<String>() {
-            &s
+            s
         } else {
             ""
         };
