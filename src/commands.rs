@@ -431,29 +431,118 @@ impl App {
     }
 
     pub fn page_up(&mut self, height: f32) -> CmdResult {
-        let num_lines = ((height / 21.0) as i32).max(1);
-        for _ in 0..num_lines {
-            std::mem::forget(self.up());
+        self.sink_cursor();
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &nodes[node];
+        let layout = node.line_layout(line_idx, &self.ctx);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
+
+        let mut y = cc.top + 0.5 * cc.height - height;
+        let mut leaf = (self.cur.block, self.cur.line);
+        while y < 0.0 {
+            let prev_leaf = prev_leaf(leaf, blocks);
+            match prev_leaf {
+                None => {
+                    y = 0.0;
+                    break;
+                }
+                Some(prev_leaf) => {
+                    let (prev_block, prev_idx) = prev_leaf;
+                    let b = &blocks[prev_block];
+                    y += b.child_size(prev_idx, &self.ctx, blocks, nodes).1;
+                    leaf = prev_leaf;
+                }
+            }
         }
+
+        let y_abs_before = blocks[self.cur.block].abs_cursor_coord(
+                self.cur.line, self.cur.pos_skew,
+                &self.ctx, blocks, nodes).top;
+
+        let (block, idx) = leaf;
+        let b = &blocks[block];
+        self.cur.block = block;
+        self.cur.line = idx;
+        self.cur.pos_skew = b.child_coords_to_pos(
+            idx, (self.cur.anchor_x, y),
+            &self.ctx, blocks, nodes);
+
+        let y_abs_after = blocks[self.cur.block].abs_cursor_coord(
+                self.cur.line, self.cur.pos_skew,
+                &self.ctx, blocks, nodes).top;
+        self.y_offset += y_abs_before - y_abs_after;
+        self.clamp_y_offset();
+
         CmdResult {
             repaint: true,
             update_anchor_x: false,
             scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
-        }        
+        }
     }
 
     pub fn page_down(&mut self, height: f32) -> CmdResult {
-        let num_lines = ((height / 21.0) as i32).max(1);
-        for _ in 0..num_lines {
-            std::mem::forget(self.down());
+        self.sink_cursor();
+
+        let blocks = &self.blocks;
+        let nodes = &self.nodes;
+
+        let b = &blocks[self.cur.block];
+        let (node, line_idx) = b.node_line_idx(self.cur.line, blocks).unwrap();
+        let node = &nodes[node];
+        let layout = node.line_layout(line_idx, &self.ctx);
+        let cc = layout.cursor_coord(self.cur.pos_skew);
+
+        let mut y = cc.top + 0.5 * cc.height + height;
+        let mut leaf = (self.cur.block, self.cur.line);
+        loop {
+            let b = &blocks[leaf.0];
+            let leaf_height = b.child_size(leaf.1, &self.ctx, blocks, nodes).1;
+            if y < leaf_height {
+                break;
+            }
+            let next_leaf = next_leaf(leaf, blocks);
+            match next_leaf {
+                None => {
+                    y = leaf_height;
+                    break;
+                }
+                Some(next_leaf) => {
+                    y -= leaf_height;
+                    leaf = next_leaf;
+                }
+            }
         }
+
+        let y_abs_before = blocks[self.cur.block].abs_cursor_coord(
+                self.cur.line, self.cur.pos_skew,
+                &self.ctx, blocks, nodes).top;
+
+        let (block, idx) = leaf;
+        let b = &blocks[block];
+        self.cur.block = block;
+        self.cur.line = idx;
+        self.cur.pos_skew = b.child_coords_to_pos(
+            idx, (self.cur.anchor_x, y),
+            &self.ctx, blocks, nodes);
+
+        let y_abs_after = blocks[self.cur.block].abs_cursor_coord(
+                self.cur.line, self.cur.pos_skew,
+                &self.ctx, blocks, nodes).top;
+        self.y_offset += y_abs_before - y_abs_after;
+        self.clamp_y_offset();
+
         CmdResult {
             repaint: true,
             update_anchor_x: false,
             scroll_to_reveal_cursor: true,
             class: CmdClass::Other,
-        }        
+        }    
     }
 
     pub fn up(&mut self) -> CmdResult {
