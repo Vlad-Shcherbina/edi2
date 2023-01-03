@@ -49,6 +49,7 @@ struct AppCtx {
     code_text_format: ComPtr<IDWriteTextFormat>,
     text_brush: ComPtr<ID2D1Brush>,
     monospace_text_brush: ComPtr<ID2D1Brush>,
+    link_brush: ComPtr<ID2D1Brush>,
     cursor_brush: ComPtr<ID2D1Brush>,
     sel_brush: ComPtr<ID2D1Brush>,
     header_rainbow_brushes: Vec<ComPtr<ID2D1Brush>>,
@@ -72,6 +73,8 @@ impl AppCtx {
             &render_target, &D2D1_COLOR_F { r: 0.8, g: 0.8, b: 0.8, a: 1.0 });
         let monospace_text_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 0.6, g: 1.0, b: 0.6, a: 1.0 });
+        let link_brush = create_solid_brush(
+            &render_target, &D2D1_COLOR_F { r: 0.5, g: 0.5, b: 1.0, a: 1.0 });
         let cursor_brush = create_solid_brush(
             &render_target, &D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 });
         let sel_brush = create_solid_brush(
@@ -109,6 +112,7 @@ impl AppCtx {
             code_text_format,
             text_brush,
             monospace_text_brush,
+            link_brush,
             cursor_brush,
             sel_brush,
             header_rainbow_brushes,

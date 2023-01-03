@@ -23,12 +23,14 @@ impl Node {
                         } else {
                             &ctx.normal_text_format
                         },
+                        &ctx.link_brush,
                         text,
                         MAX_WIDTH),
-                Line::Node { local_header, .. } => 
+                Line::Node { local_header, .. } =>
                     TextLayout::new(
                         &ctx.dwrite_factory,
                         &ctx.header_text_format,
+                        &ctx.link_brush,
                         local_header, MAX_WIDTH),
             }
         })

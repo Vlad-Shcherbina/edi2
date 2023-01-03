@@ -1,7 +1,9 @@
 use std::convert::TryInto;
 use wio::com::ComPtr;
 use wio::wide::ToWide;
+use winapi::shared::minwindef::*;
 use winapi::um::dwrite::*;
+use winapi::um::d2d1::*;
 use winapi::shared::winerror::*;
 use crate::win_util::*;
 use crate::util::*;
@@ -37,11 +39,27 @@ impl TextLayout {
     pub fn new(
         dwrite_factory: &ComPtr<IDWriteFactory>,
         text_format: &ComPtr<IDWriteTextFormat>,
+        link_brush: &ComPtr<ID2D1Brush>,
         text: &str,
         max_width: f32,
     ) -> TextLayout {
         let raw = create_text_layout(
             dwrite_factory, &text.to_wide(), text_format, max_width, 0.0);
+
+        for (start, end) in find_urls(text) {
+            let start = wide_len(&text[..start]);  // TODO: not very efficient
+            let len = wide_len(&text[start..end]);
+            let range = DWRITE_TEXT_RANGE {
+                startPosition: start.try_into().unwrap(),
+                length: len.try_into().unwrap(),
+            };
+            let hr = unsafe {
+                raw.SetDrawingEffect(link_brush.clone().up().up().as_raw(), range)
+            };
+            assert!(hr == S_OK, "0x{:x}", hr);
+            let hr = unsafe { raw.SetUnderline(TRUE, range) };
+            assert!(hr == S_OK, "0x{:x}", hr);
+        }
 
         let mut text_metrics = unsafe { std::mem::zeroed() };
         let hr = unsafe { raw.GetMetrics(&mut text_metrics) };
