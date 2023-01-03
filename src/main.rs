@@ -1,7 +1,6 @@
 #![cfg_attr(feature = "product",
     windows_subsystem = "windows")]  // prevent console
 
-#![feature(backtrace)]
 #![allow(clippy::many_single_char_names)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::needless_collect)]  // this lint has many bugs; maybe enable later
