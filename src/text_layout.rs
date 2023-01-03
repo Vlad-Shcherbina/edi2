@@ -12,6 +12,7 @@ pub struct TextLayout {
     pub raw: ComPtr<IDWriteTextLayout>,
     pub text: String,
     pub height: f32,
+    url_rects: Vec<((f32, f32, f32, f32), String)>,
 }
 
 pub struct CursorCoord {
@@ -46,6 +47,7 @@ impl TextLayout {
         let raw = create_text_layout(
             dwrite_factory, &text.to_wide(), text_format, max_width, 0.0);
 
+        let mut url_rects = vec![];
         for (start, end) in find_urls(text) {
             let start = wide_len(&text[..start]);  // TODO: not very efficient
             let len = wide_len(&text[start..end]);
@@ -59,6 +61,13 @@ impl TextLayout {
             assert!(hr == S_OK, "0x{:x}", hr);
             let hr = unsafe { raw.SetUnderline(TRUE, range) };
             assert!(hr == S_OK, "0x{:x}", hr);
+
+            for rect in hit_test_text_range(&raw, start, start + len) {
+                url_rects.push((
+                    (rect.left, rect.top, rect.width, rect.height),
+                    text[start..end].to_string(),
+                ));
+            }
         }
 
         let mut text_metrics = unsafe { std::mem::zeroed() };
@@ -69,6 +78,7 @@ impl TextLayout {
             raw,
             text: text.to_string(),
             height: text_metrics.height,
+            url_rects,
         }
     }
 
@@ -134,7 +144,17 @@ impl TextLayout {
             1 => (next_char_pos(&self.text, pos).unwrap(), Skew::Lefty),
             _ => panic!(),
         }
-    }    
+    }
+
+    pub fn hover_url(&self, x: f32, y: f32) -> Option<&str> {
+        for (rect, url) in &self.url_rects {
+            let (left, top, width, height) = *rect;
+            if left <= x && x <= left + width && top <= y && y <= top + height {
+                return Some(url);
+            }
+        }
+        None
+    }
 }
 
 fn wide_len(s: &str) -> usize {

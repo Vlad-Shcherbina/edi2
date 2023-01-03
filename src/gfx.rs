@@ -418,6 +418,9 @@ pub enum MouseResult {
         line: usize,
         pos_skew: (usize, Skew),
     },
+    Link {
+        url: String,
+    },
     Toggle {
         block: BlockKey,
     }
@@ -442,9 +445,16 @@ impl<'a> BlockVisitor for MouseClickVisitor<'a> {
                     let node = &nodes[node];
                     let layout = node.line_layout(line_idx, self.ctx);
                     if y <= self.y && self.y <= y + layout.height {
-                        let pos_skew = layout.coords_to_pos(self.x - x, self.y - y);
                         if let MouseResult::Nothing = self.result {
-                            self.result = MouseResult::Cur { block, line: idx, pos_skew };
+                            match layout.hover_url(self.x - x, self.y - y) {
+                                Some(url) => {
+                                    self.result = MouseResult::Link { url: url.to_owned() };
+                                }
+                                None => {
+                                    let pos_skew = layout.coords_to_pos(self.x - x, self.y - y);
+                                    self.result = MouseResult::Cur { block, line: idx, pos_skew };
+                                }
+                            }
                         }
                     }
                 }

@@ -834,6 +834,7 @@ impl WindowProcState for App {
                     gfx::MouseResult::Nothing => app.ctx.arrow_cursor,
                     gfx::MouseResult::Cur { .. } => app.ctx.beam_cursor,
                     gfx::MouseResult::Toggle { .. } => app.ctx.hand_cursor,
+                    gfx::MouseResult::Link { .. } => app.ctx.hand_cursor,
                 };
                 unsafe {
                     SetCursor(cur);
@@ -843,7 +844,8 @@ impl WindowProcState for App {
                 let x = GET_X_LPARAM(lparam);
                 let y = GET_Y_LPARAM(lparam);
                 println!("{} {} {}", win_msg_name(msg), x, y);
-                let app = &mut *sr.state_mut();
+                let mut sr_guard = sr.state_mut();
+                let app = &mut *sr_guard;
                 let mut v = gfx::MouseClickVisitor {
                     x: x as f32,
                     y: y as f32,
@@ -883,6 +885,10 @@ impl WindowProcState for App {
                             }
                         };
                         cmd_res.process(hwnd, app);
+                    }
+                    gfx::MouseResult::Link { url } => {
+                        drop(sr_guard);
+                        shell_execute(sr.reent(), hwnd, "open", &url, None, None, 0);
                     }
                 }
             }
