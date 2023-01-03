@@ -519,7 +519,7 @@ impl App {
         let tx = self.conn.transaction().unwrap();
         for &node in &self.unsaved.nodes {
             let db_key = nodes[node].db_key;
-            println!("  saving node {:?} (db key {})", node, db_key);
+            println!("  saving node {node:?} (db key {db_key})");
             assert_eq!(self.db_key_to_node_key[&db_key], node);
             let dn = storage::DiskNode::from(&nodes[node], nodes);
             storage::save_node(db_key, &dn, &tx);
@@ -797,7 +797,7 @@ impl WindowProcState for App {
             }
             WM_PAINT => {
                 eprintln!("{}", win_msg_name(msg));
-                paint(&mut *sr.state_mut());
+                paint(&mut sr.state_mut());
             }
             WM_MOUSEWHEEL => {
                 let delta = GET_WHEEL_DELTA_WPARAM(wparam);
@@ -1093,9 +1093,8 @@ fn panic_hook(pi: &std::panic::PanicInfo) {
 
     let bt = std::backtrace::Backtrace::force_capture();
     let message = format!(
-        "panicked at {:?}, {}\nstack backtrace:\n{}",
-        payload, loc, bt);
-    eprintln!("{}", message);
+        "panicked at {payload:?}, {loc}\nstack backtrace:\n{bt}");
+    eprintln!("{message}");
     std::fs::write("crash.txt", message).unwrap();
 
     unsafe {

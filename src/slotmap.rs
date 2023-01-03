@@ -121,7 +121,7 @@ impl<K: Key, T> std::ops::Index<K> for SlotMap<K, T> {
         let slot = &self.slots[k.index() as usize];
         assert_eq!(slot.version, k.version());
         assert!(slot.occupied());
-        unsafe { &*slot.u.value }
+        unsafe { &slot.u.value }
     }
 }
 
@@ -130,7 +130,7 @@ impl<K: Key, T> std::ops::IndexMut<K> for SlotMap<K, T> {
         let slot = &mut self.slots[k.index() as usize];
         assert_eq!(slot.version, k.version());
         assert!(slot.occupied());
-        unsafe { &mut *slot.u.value }
+        unsafe { &mut slot.u.value }
     }
 }
 
