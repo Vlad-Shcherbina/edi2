@@ -24,16 +24,13 @@ pub struct CursorCoord {
 // text="ab", pos=1, skew=Lefty  means  the cursor is to the right of 'a'
 // text="ab", pos=1, skew=Righty  means  the cursor is to the left of 'b'
 // This matters if 'a' and 'b' are on different lines because of line wrapping.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Skew {
-    Lefty,
-    Righty,
-}
-
 // Use explicit 'Skew::Righty' when we really care (e.g. in `fn left()`),
 // and 'Skew::default()' where it doesn't matter.
-impl Default for Skew {
-    fn default() -> Self { Skew::Righty }
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum Skew {
+    Lefty,
+    #[default]
+    Righty,
 }
 
 impl TextLayout {
