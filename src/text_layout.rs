@@ -49,11 +49,11 @@ impl TextLayout {
 
         let mut url_rects = vec![];
         for (start, end) in find_urls(text) {
-            let start = wide_len(&text[..start]);  // TODO: not very efficient
-            let len = wide_len(&text[start..end]);
+            let w_start = wide_len(&text[..start]);  // TODO: not very efficient
+            let w_len = wide_len(&text[start..end]);
             let range = DWRITE_TEXT_RANGE {
-                startPosition: start.try_into().unwrap(),
-                length: len.try_into().unwrap(),
+                startPosition: w_start.try_into().unwrap(),
+                length: w_len.try_into().unwrap(),
             };
             let hr = unsafe {
                 raw.SetDrawingEffect(link_brush.clone().up().up().as_raw(), range)
@@ -62,7 +62,7 @@ impl TextLayout {
             let hr = unsafe { raw.SetUnderline(TRUE, range) };
             assert!(hr == S_OK, "0x{:x}", hr);
 
-            for rect in hit_test_text_range(&raw, start, start + len) {
+            for rect in hit_test_text_range(&raw, w_start, w_start + w_len) {
                 url_rects.push((
                     (rect.left, rect.top, rect.width, rect.height),
                     text[start..end].to_string(),
